@@ -176,6 +176,11 @@ input:focus-visible, textarea:focus-visible { outline: none; border-color: var(-
   .actions { position: sticky; bottom: 0; padding: 12px 0 8px; background: linear-gradient(to top, var(--night) 70%, transparent); }
 }
 
+/* ---------- finished: just the video, any notes, and the two actions ---------- */
+.layout[data-state="done"] .composer > :is(.field, .row, .style) { display: none; }
+.layout[data-state="done"] .actions { position: static; padding: 0; background: none; }
+.after .btn { padding: 0 12px; white-space: nowrap; }
+
 /* ---------- dialog ---------- */
 dialog {
   width: min(440px, calc(100vw - 32px)); padding: 24px; color: var(--moon);
