@@ -1,0 +1,5 @@
+fastapi>=0.115
+uvicorn>=0.30
+requests>=2.32
+edge-tts>=6.1
+youtube-transcript-api>=1.0

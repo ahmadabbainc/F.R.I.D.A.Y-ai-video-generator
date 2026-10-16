@@ -1,0 +1,27 @@
+name: Check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installing video tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: engine/requirements.txt
+      - run: pip install -r engine/requirements.txt httpx
+      - name: Engine tests
+        working-directory: engine
+        run: python -m unittest discover -s tests -v

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Friday</title>
+  <meta name="description" content="Give Friday a title and press Generate. It writes, voices, captions and renders the video.">
+  <meta name="theme-color" content="#100e24">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <span class="brand">Friday</span>
+    <button class="icon-btn" id="open-settings" type="button" aria-label="Connection settings">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>
+  </header>
+
+  <main class="layout" id="layout" data-aspect="9:16" data-state="idle">
+    <section class="stage-wrap" aria-label="Preview">
+      <div class="stage" id="stage">
+        <div class="stage__bg" aria-hidden="true"></div>
+        <p class="stage__title" id="stage-title" data-empty="true">Your title appears here</p>
+        <div class="stage__work" id="stage-work" hidden>
+          <p class="stage__label" id="work-label" role="status" aria-live="polite">Waiting in line</p>
+          <div class="stage__bar" aria-hidden="true"><i id="work-bar"></i></div>
+        </div>
+        <video class="stage__video" id="player" controls playsinline hidden></video>
+      </div>
+      <p class="engine-note" id="engine-note" hidden></p>
+    </section>
+
+    <form class="composer" id="composer" novalidate>
+      <div class="field">
+        <label for="title">Title</label>
+        <input id="title" name="title" type="text" maxlength="120" autocomplete="off" placeholder="How to save money on groceries" required>
+      </div>
+
+      <div class="field">
+        <label for="topic">Topic <span class="opt">optional</span></label>
+        <textarea id="topic" name="topic" rows="3" maxlength="2000" placeholder="Leave this empty and Friday decides what to cover."></textarea>
+      </div>
+
+      <div class="row">
+        <fieldset class="seg" id="aspect-seg">
+          <legend>Format</legend>
+          <label><input type="radio" name="aspect" value="9:16" checked><span>Vertical</span></label>
+          <label><input type="radio" name="aspect" value="16:9"><span>Wide</span></label>
+        </fieldset>
+        <fieldset class="seg" id="length-seg">
+          <legend>Length</legend>
+          <label><input type="radio" name="seconds" value="30"><span>30s</span></label>
+          <label><input type="radio" name="seconds" value="45" checked><span>45s</span></label>
+          <label><input type="radio" name="seconds" value="60"><span>60s</span></label>
+        </fieldset>
+      </div>
+
+      <details class="style">
+        <summary>Match a video's style</summary>
+        <div class="style__body">
+          <label class="sr-only" for="style-url">YouTube link</label>
+          <input id="style-url" name="style_url" type="url" inputmode="url" autocomplete="off" placeholder="Paste a YouTube link">
+          <p class="hint">Friday copies the pacing and structure, never the words.</p>
+        </div>
+      </details>
+
+      <div class="actions">
+        <p class="error" id="error" role="alert" hidden></p>
+        <ul class="notes" id="notes" hidden></ul>
+        <button class="go" id="go" type="submit">Generate video</button>
+        <div class="after" id="after" hidden>
+          <a class="btn" id="download" href="#" download>Download video</a>
+          <button class="btn btn--quiet" id="again" type="button">Make another</button>
+        </div>
+      </div>
+    </form>
+  </main>
+
+  <dialog id="settings" aria-labelledby="settings-title">
+    <form method="dialog" id="settings-form">
+      <h2 id="settings-title">Connection</h2>
+      <p class="hint">Friday renders your videos on GitHub, for free. It needs a token that can only run this one repository's Render workflow.</p>
+      <label for="gh-token">GitHub token</label>
+      <input id="gh-token" type="password" autocomplete="off" placeholder="github_pat_...">
+      <p class="hint"><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Create a token</a>. Choose "Only select repositories", pick this one, and set Actions to read and write. Nothing else.</p>
+      <label for="gh-repo">Repository</label>
+      <input id="gh-repo" type="text" autocomplete="off" spellcheck="false" placeholder="owner/repository">
+      <details class="style">
+        <summary>Use my own engine instead</summary>
+        <div class="style__body">
+          <label for="api-url">Engine address</label>
+          <input id="api-url" type="url" inputmode="url" autocomplete="off" placeholder="https://engine.example.com">
+          <label for="api-key">Access key <span class="opt">if you set one</span></label>
+          <input id="api-key" type="password" autocomplete="off">
+          <p class="hint">When an address is set, Friday uses it and ignores GitHub.</p>
+        </div>
+      </details>
+      <p class="status" id="settings-status" role="status"></p>
+      <div class="dialog-actions">
+        <button class="btn btn--quiet" value="cancel" type="submit">Close</button>
+        <button class="btn" id="save-settings" type="button">Save and test</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

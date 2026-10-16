@@ -1,0 +1,106 @@
+name: Render
+
+# The app starts this workflow with the title and options, then waits for the
+# release it publishes. The run name is how the app finds its own run.
+run-name: Friday ${{ inputs.job_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "12 character id chosen by the app"
+        required: true
+        type: string
+      title:
+        required: true
+        type: string
+      topic:
+        required: false
+        type: string
+        default: ""
+      aspect:
+        required: false
+        type: string
+        default: "9:16"
+      seconds:
+        required: false
+        type: string
+        default: "45"
+      style_url:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write # publishes the finished video as a release
+
+concurrency:
+  group: friday-render
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Preparing
+        uses: actions/checkout@v4
+
+      - name: Installing video tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+
+      - name: Installing Friday
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: engine/requirements.txt
+
+      - name: Installing Friday packages
+        run: pip install -r engine/requirements.txt
+
+      - name: Writing, voicing and rendering
+        working-directory: engine
+        # Inputs go through env vars, never straight into the script, so a
+        # crafted title cannot inject shell commands.
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          TITLE: ${{ inputs.title }}
+          TOPIC: ${{ inputs.topic }}
+          ASPECT: ${{ inputs.aspect }}
+          SECONDS_LONG: ${{ inputs.seconds }}
+          STYLE_URL: ${{ inputs.style_url }}
+          FRIDAY_LLM_API_KEY: ${{ secrets.FRIDAY_LLM_API_KEY }}
+          FRIDAY_LLM_BASE_URL: ${{ vars.FRIDAY_LLM_BASE_URL }}
+          FRIDAY_LLM_MODEL: ${{ vars.FRIDAY_LLM_MODEL }}
+          FRIDAY_VOICE: ${{ vars.FRIDAY_VOICE }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$JOB_ID" =~ ^[a-f0-9]{12}$ ]] || { echo "Bad job id"; exit 1; }
+          python -m friday render \
+            --title "$TITLE" --topic "$TOPIC" --aspect "$ASPECT" \
+            --seconds "$SECONDS_LONG" --style-url "$STYLE_URL" \
+            --out "$RUNNER_TEMP/video.mp4" --notes "$RUNNER_TEMP/notes.txt"
+
+      - name: Publishing your video
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_ID: ${{ inputs.job_id }}
+          TITLE: ${{ inputs.title }}
+        run: |
+          set -euo pipefail
+          gh release create "friday-$JOB_ID" "$RUNNER_TEMP/video.mp4" \
+            --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.txt" --target "$GITHUB_SHA"
+
+      - name: Tidying up
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Keep the newest 20 videos so the repo stays small.
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("friday-"))] | sort_by(.createdAt) | reverse | .[20:] | .[].tagName' \
+            | while read -r tag; do gh release delete "$tag" --cleanup-tag --yes; done
