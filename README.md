@@ -21,7 +21,8 @@ Browser app (GitHub Pages)  ──starts──▶  Render workflow (GitHub Actio
 
 1. **Turn on the app.** In this repository: Settings → Pages → Source: **GitHub Actions**. Push to `main` and the app appears at `https://<your-name>.github.io/<repository>/`.
 2. **Add free keys** (Settings → Secrets and variables → Actions). Friday works without them, using template scripts and plain backgrounds, but real results need these:
-   - `PEXELS_API_KEY` (secret): free stock footage, from pexels.com/api.
+   - `PIXABAY_API_KEY` (secret): free stock footage. Sign up at pixabay.com, then open pixabay.com/api/docs/ while logged in and your key is shown on the page. Friday credits Pixabay in the video's notes, as their API terms ask.
+   - `PEXELS_API_KEY` (secret, optional alternative): Pexels paused new API keys in October 2026, but existing keys still work and Friday uses them first if both are set.
    - `FRIDAY_LLM_API_KEY` (secret): any OpenAI-compatible chat key. The default endpoint is Google's Gemini (Google AI Studio has a free key). To use another provider, set the variables `FRIDAY_LLM_BASE_URL` and `FRIDAY_LLM_MODEL`. Free-tier limits and model names change, so check them if scripts stop working.
 3. **Make a token** at github.com/settings/personal-access-tokens/new: *Only select repositories*, pick this one, set **Actions: Read and write**, nothing else. It can do nothing except start renders on this repository.
 4. **Open the app**, tap the gear, paste the token. The token stays in your browser only.

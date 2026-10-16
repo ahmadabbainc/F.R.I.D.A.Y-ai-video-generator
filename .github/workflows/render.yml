@@ -77,6 +77,7 @@ jobs:
           FRIDAY_LLM_MODEL: ${{ vars.FRIDAY_LLM_MODEL }}
           FRIDAY_VOICE: ${{ vars.FRIDAY_VOICE }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
         run: |
           set -euo pipefail
           [[ "$JOB_ID" =~ ^[a-f0-9]{12}$ ]] || { echo "Bad job id"; exit 1; }

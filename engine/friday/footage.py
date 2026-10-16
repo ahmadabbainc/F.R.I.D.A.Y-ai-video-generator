@@ -1,4 +1,9 @@
-"""Stock footage from Pexels (free API key). Returns None when nothing is found."""
+"""Stock footage from Pexels or Pixabay (both free with an account).
+
+fetch_clip() tries each provider that has a key and returns (path, provider)
+for the first usable clip, or None so the caller can fall back to a generated
+background. It never raises: a missing clip must not fail a video.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +14,10 @@ import requests
 from .config import Settings
 
 PEXELS_SEARCH = "https://api.pexels.com/videos/search"
+PIXABAY_SEARCH = "https://pixabay.com/api/videos/"
+
+# Used clip ids are tracked per provider so two scenes never show the same footage.
+Used = set[tuple[str, int]]
 
 
 def fetch_clip(
@@ -16,40 +25,84 @@ def fetch_clip(
     aspect: str,
     dest: Path,
     settings: Settings,
-    used: set[int],
-) -> Path | None:
-    if not settings.live_footage or not keywords:
+    used: Used,
+) -> tuple[Path, str] | None:
+    if not keywords.strip():
         return None
-    orientation = "portrait" if aspect == "9:16" else "landscape"
-    try:
-        resp = requests.get(
-            PEXELS_SEARCH,
-            headers={"Authorization": settings.pexels_api_key},
-            params={"query": keywords, "orientation": orientation, "per_page": 10, "size": "medium"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        for video in resp.json().get("videos", []):
-            if video["id"] in used:
-                continue
-            link = _pick_file(video.get("video_files", []))
-            if not link:
-                continue
-            _download(link, dest)
-            used.add(video["id"])
-            return dest
-    except Exception:
-        return None
+    portrait = aspect == "9:16"
+    providers = []
+    if settings.pexels_api_key:
+        providers.append(("Pexels", _pexels))
+    if settings.pixabay_api_key:
+        providers.append(("Pixabay", _pixabay))
+    for name, search in providers:
+        try:
+            hit = search(keywords, portrait, settings, used)
+            if hit:
+                clip_id, url = hit
+                _download(url, dest)
+                used.add((name, clip_id))
+                return dest, name
+        except Exception:
+            continue  # network, quota, odd response: try the next provider
     return None
 
 
-def _pick_file(files: list[dict]) -> str | None:
+def _pexels(keywords: str, portrait: bool, settings: Settings, used: Used) -> tuple[int, str] | None:
+    resp = requests.get(
+        PEXELS_SEARCH,
+        headers={"Authorization": settings.pexels_api_key},
+        params={"query": keywords, "orientation": "portrait" if portrait else "landscape", "per_page": 10, "size": "medium"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    for video in resp.json().get("videos", []):
+        if ("Pexels", video["id"]) in used:
+            continue
+        link = _pick_pexels_file(video.get("video_files", []))
+        if link:
+            return video["id"], link
+    return None
+
+
+def _pick_pexels_file(files: list[dict]) -> str | None:
     """Prefer an mp4 close to 1080 on the long side; smaller downloads render faster."""
     mp4s = [f for f in files if f.get("file_type") == "video/mp4" and f.get("link")]
     if not mp4s:
         return None
     mp4s.sort(key=lambda f: abs(max(f.get("width", 0), f.get("height", 0)) - 1920))
     return mp4s[0]["link"]
+
+
+def _pixabay(keywords: str, portrait: bool, settings: Settings, used: Used) -> tuple[int, str] | None:
+    resp = requests.get(
+        PIXABAY_SEARCH,
+        params={"key": settings.pixabay_api_key, "q": keywords[:100], "per_page": 20, "safesearch": "true"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    candidates = []
+    for hit in resp.json().get("hits", []):
+        if ("Pixabay", hit["id"]) in used:
+            continue
+        pick = _pick_pixabay_file(hit.get("videos", {}))
+        if pick:
+            url, width, height = pick
+            # Pixabay has no orientation filter, so rank matching clips first.
+            candidates.append((0 if (height > width) == portrait else 1, hit["id"], url))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: c[0])  # stable: keeps Pixabay's popularity order within a group
+    return candidates[0][1], candidates[0][2]
+
+
+def _pick_pixabay_file(videos: dict) -> tuple[str, int, int] | None:
+    """Medium is about 1080p. Skip 'large' (often 4K) because it is slow to download and render."""
+    for size in ("medium", "small", "large", "tiny"):
+        v = videos.get(size) or {}
+        if v.get("url"):
+            return v["url"], int(v.get("width") or 0), int(v.get("height") or 0)
+    return None
 
 
 def _download(url: str, dest: Path) -> None:

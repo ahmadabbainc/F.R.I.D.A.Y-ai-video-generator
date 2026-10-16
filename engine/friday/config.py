@@ -18,8 +18,9 @@ class Settings:
     llm_api_key: str = ""
     llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     llm_model: str = "gemini-2.5-flash"
-    # Free key from pexels.com/api, used for stock footage.
+    # Free keys for stock footage. Either one is enough; both can be set.
     pexels_api_key: str = ""
+    pixabay_api_key: str = ""
     # edge-tts voice name. Free, no key.
     voice: str = "en-US-AndrewNeural"
     # Caption font family (must exist on the machine doing the render).
@@ -36,7 +37,7 @@ class Settings:
 
     @property
     def live_footage(self) -> bool:
-        return bool(self.pexels_api_key)
+        return bool(self.pexels_api_key or self.pixabay_api_key)
 
     @property
     def mode(self) -> str:
@@ -58,6 +59,7 @@ def load() -> Settings:
         llm_base_url=env("FRIDAY_LLM_BASE_URL", defaults.llm_base_url).rstrip("/"),
         llm_model=env("FRIDAY_LLM_MODEL", defaults.llm_model),
         pexels_api_key=env("PEXELS_API_KEY"),
+        pixabay_api_key=env("PIXABAY_API_KEY"),
         voice=env("FRIDAY_VOICE", defaults.voice),
         caption_font=env("FRIDAY_CAPTION_FONT", defaults.caption_font),
         render_scale=float(env("FRIDAY_RENDER_SCALE", "1.0")),
