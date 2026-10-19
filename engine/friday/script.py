@@ -121,7 +121,7 @@ def demo_script(title: str, topic: str, seconds: int) -> list[Scene]:
     fallback = " ".join(words[:2]) or "abstract background"
     scenes = [Scene(line, scene_keywords(line, fallback)) for line in lines]
     if len(scenes) > 1:
-        scenes[-1].keywords = fallback  # the closing line is generic, so show the video's theme
+        scenes[-1] = Scene(scenes[-1].narration, fallback)  # closing line is generic: show the video's theme
     return scenes
 
 
