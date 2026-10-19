@@ -119,7 +119,10 @@ def demo_script(title: str, topic: str, seconds: int) -> list[Scene]:
     lines = body + [closing]
     words = re.findall(r"[A-Za-z]{4,}", f"{title} {topic}")
     fallback = " ".join(words[:2]) or "abstract background"
-    return [Scene(line, scene_keywords(line, fallback)) for line in lines]
+    scenes = [Scene(line, scene_keywords(line, fallback)) for line in lines]
+    if len(scenes) > 1:
+        scenes[-1].keywords = fallback  # the closing line is generic, so show the video's theme
+    return scenes
 
 
 _STOP = set(

@@ -150,3 +150,10 @@ class SceneKeywordTests(unittest.TestCase):
         self.assertGreater(len(set(words)), 1)
         self.assertIn("subscriptions", " ".join(words))
         self.assertIn("cook", " ".join(words))
+
+
+class QueryFallbackTests(unittest.TestCase):
+    def test_queries_fall_back_to_words_then_theme(self):
+        from friday.pipeline import _queries
+        self.assertEqual(_queries("cook home", "Save money fast"), ["cook home", "cook", "home", "Save money fast"])
+        self.assertEqual(_queries("", "Hi"), [])

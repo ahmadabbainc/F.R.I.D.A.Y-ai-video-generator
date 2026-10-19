@@ -30,6 +30,17 @@ class Result:
     warnings: list[str] = field(default_factory=list)
 
 
+def _queries(keywords: str, title: str) -> list[str]:
+    """Best search first, then each word alone, then the video's own theme."""
+    words = keywords.split()
+    out = [keywords] + (words if len(words) > 1 else [])
+    theme = " ".join(w for w in title.split() if len(w) > 3)[:60]
+    if theme:
+        out.append(theme)
+    seen: list[str] = []
+    return [q for q in out if q.strip() and not (q in seen or seen.append(q))]
+
+
 def generate(req: Request, out: Path, settings: Settings, progress: Progress | None = None) -> Result:
     def step(pct: int, label: str) -> None:
         if progress:
@@ -75,7 +86,11 @@ def generate(req: Request, out: Path, settings: Settings, progress: Progress | N
             spoke_any = spoke_any or spoken
             duration = round(speech + 0.45, 3)  # small breath between scenes
 
-            found = footage.fetch_clip(scene.keywords, aspect, work / f"clip_{i}.mp4", settings, used)
+            found = None
+            for query in _queries(scene.keywords, title):
+                found = footage.fetch_clip(query, aspect, work / f"clip_{i}.mp4", settings, used)
+                if found:
+                    break
             clip = found[0] if found else None
             if found:
                 credits.add(found[1])
