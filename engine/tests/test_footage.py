@@ -8,7 +8,9 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from friday import config, footage  # noqa: E402
+from friday import config, footage, voice  # noqa: E402
+
+voice.PAUSE_SECONDS = 0
 from friday.pipeline import Request, generate  # noqa: E402
 
 

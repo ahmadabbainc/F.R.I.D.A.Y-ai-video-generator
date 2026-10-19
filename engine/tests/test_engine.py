@@ -11,6 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from friday import captions, config, inspire, script  # noqa: E402
 from friday.pipeline import Request, generate  # noqa: E402
+from friday import voice as _voice  # noqa: E402
+
+_voice.PAUSE_SECONDS = 0  # no waiting between retries in tests
 
 
 class ConfigTests(unittest.TestCase):
@@ -191,3 +194,26 @@ class LlmRetryTests(unittest.TestCase):
         with mock.patch.object(script.requests, "post", lambda *a, **k: next(seq)), mock.patch.object(script.time, "sleep"):
             scenes = script._llm_script("T", "t", 30, s, "")
         self.assertEqual(scenes[0].keywords, "cat sleeping")
+
+
+class VoiceFallbackTests(unittest.TestCase):
+    def test_falls_back_to_offline_voice_then_silence(self):
+        import dataclasses, tempfile
+        from pathlib import Path
+        from unittest import mock
+        from friday import config, voice
+
+        s = config.Settings()
+        async def boom(*a, **k):
+            raise ConnectionError("blocked")
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(voice, "_edge", boom), mock.patch.object(voice.time, "sleep"):
+            with mock.patch.object(voice, "_espeak", lambda text, dest, rate: False):
+                path, dur, spoken = voice.synthesize("Hello there friend", Path(tmp) / "v", s)
+                self.assertFalse(spoken)
+                self.assertGreater(dur, 1)
+            def fake_espeak(text, dest, rate):
+                voice._silence(text, dest)  # stands in for a real recording
+                return True
+            with mock.patch.object(voice, "_espeak", fake_espeak):
+                _, _, spoken = voice.synthesize("Hello there friend", Path(tmp) / "w", s)
+                self.assertTrue(spoken)

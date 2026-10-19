@@ -77,7 +77,7 @@ def _pick_pexels_file(files: list[dict]) -> str | None:
 def _pixabay(keywords: str, portrait: bool, settings: Settings, used: Used) -> tuple[int, str] | None:
     resp = requests.get(
         PIXABAY_SEARCH,
-        params={"key": settings.pixabay_api_key, "q": keywords[:100], "per_page": 20, "safesearch": "true"},
+        params={"key": settings.pixabay_api_key, "q": keywords[:100], "per_page": 20, "safesearch": "true", "video_type": "film"},
         timeout=30,
     )
     resp.raise_for_status()

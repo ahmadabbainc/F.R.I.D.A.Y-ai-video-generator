@@ -66,7 +66,10 @@ def _llm_script(title: str, topic: str, seconds: int, settings: Settings, style_
         "Each keywords value is 2 to 3 English words for a stock-footage search that shows exactly what "
         "that scene's narration says: a concrete, filmable subject plus its setting or action "
         '(for example "woman stretching bedroom", "glass of water", "city traffic night"). '
-        "Never use abstract words like success, mindset, tips or growth; picture the idea as a real scene."
+        "Never use abstract words like success, mindset, tips or growth; picture the idea as a real scene. "
+        "Stock libraries have no footage of specific people, brands or companies, so never put a name in keywords: "
+        'for a person or company show their world instead (for Elon Musk: "rocket launch", "electric car", "tech engineers"). '
+        "Never ask for cartoons or animation."
     )
     user = (
         f"Title: {title}\nTopic: {topic}\n"

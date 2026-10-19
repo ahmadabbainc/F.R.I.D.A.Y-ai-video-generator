@@ -77,13 +77,13 @@ def generate(req: Request, out: Path, settings: Settings, progress: Progress | N
         used: footage.Used = set()
         credits: set[str] = set()
         cursor = 0.0
-        spoke_any = False
+        silent_scenes = 0
         total = len(scenes)
 
         for i, scene in enumerate(scenes):
             step(20 + int(60 * i / total), f"Building scene {i + 1} of {total}")
             audio_path, speech, spoken = voice.synthesize(scene.narration, work / f"voice_{i}", settings, rate)
-            spoke_any = spoke_any or spoken
+            silent_scenes += 0 if spoken else 1
             duration = round(speech + 0.45, 3)  # small breath between scenes
 
             found = None
@@ -105,8 +105,10 @@ def generate(req: Request, out: Path, settings: Settings, progress: Progress | N
             timed.append(captions.Timed(cursor, speech, scene.narration))
             cursor += duration
 
-        if not spoke_any:
+        if silent_scenes == total:
             warnings.append("Voice service unreachable, so this video is silent. Captions are still burned in.")
+        elif silent_scenes:
+            warnings.append(f"{silent_scenes} of {total} scenes had no voice because the voice service failed. Try again.")
         if not settings.live_footage:
             warnings.append("No footage key set, used generated backgrounds. Add PIXABAY_API_KEY (or PEXELS_API_KEY) for stock footage.")
         elif not credits:
