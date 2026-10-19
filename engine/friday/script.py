@@ -118,5 +118,27 @@ def demo_script(title: str, topic: str, seconds: int) -> list[Scene]:
         body.append(extra)
     lines = body + [closing]
     words = re.findall(r"[A-Za-z]{4,}", f"{title} {topic}")
-    keyword = " ".join(words[:2]) or "abstract background"
-    return [Scene(line, keyword) for line in lines]
+    fallback = " ".join(words[:2]) or "abstract background"
+    return [Scene(line, scene_keywords(line, fallback)) for line in lines]
+
+
+_STOP = set(
+    "about after again also always another any because before being between both build but "
+    "can cannot could day days did does doing done down each else even ever every for from "
+    "get give goes going good great had has have here how into its just keep know let like "
+    "look made make many more most much must need never next not now off once one only other "
+    "our out over own per same save say should since some someone something still such take "
+    "than that the their them then there these they thing things this those three through "
+    "time two until use used using very want was way week were what when where which while "
+    "who will with without would year you your yours".split()
+)
+
+
+def scene_keywords(line: str, fallback: str = "abstract background") -> str:
+    """Pick up to two concrete-sounding words from a scene's own sentence."""
+    seen: list[str] = []
+    for w in re.findall(r"[A-Za-z]{4,}", line):
+        lw = w.lower()
+        if lw not in _STOP and lw not in seen:
+            seen.append(lw)
+    return " ".join(seen[:2]) or fallback

@@ -140,3 +140,13 @@ class PipelineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SceneKeywordTests(unittest.TestCase):
+    def test_each_demo_scene_searches_its_own_words(self):
+        from friday import script
+        scenes = script.demo_script("Save money", "Cancel the subscriptions you never use. Cook at home three nights a week.", 30)
+        words = [s.keywords for s in scenes]
+        self.assertGreater(len(set(words)), 1)
+        self.assertIn("subscriptions", " ".join(words))
+        self.assertIn("cook", " ".join(words))
