@@ -157,3 +157,14 @@ class QueryFallbackTests(unittest.TestCase):
         from friday.pipeline import _queries
         self.assertEqual(_queries("cook home", "Save money fast"), ["cook home", "cook", "home", "Save money fast"])
         self.assertEqual(_queries("", "Hi"), [])
+
+
+class ModelFallbackTests(unittest.TestCase):
+    def test_google_endpoint_gets_fallback_models_others_do_not(self):
+        import dataclasses
+        from friday import config, script
+        g = dataclasses.replace(config.Settings(), llm_api_key="k")
+        self.assertEqual(script._models(g)[0], g.llm_model)
+        self.assertGreater(len(script._models(g)), 1)
+        other = dataclasses.replace(g, llm_base_url="https://api.groq.com/openai/v1", llm_model="x")
+        self.assertEqual(script._models(other), ["x"])

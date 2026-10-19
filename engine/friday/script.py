@@ -43,6 +43,17 @@ def make_script(
     return demo_script(title, topic, seconds), warnings
 
 
+GEMINI_FALLBACKS = ["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+
+
+def _models(settings: Settings) -> list[str]:
+    """The configured model first; on Google's endpoint, current alternatives after it."""
+    models = [settings.llm_model]
+    if "googleapis.com" in settings.llm_base_url:
+        models += [m for m in GEMINI_FALLBACKS if m not in models]
+    return models
+
+
 def _llm_script(title: str, topic: str, seconds: int, settings: Settings, style_hint: str) -> list[Scene]:
     n = scene_count(seconds)
     words = int(seconds * WORDS_PER_SECOND)
@@ -62,16 +73,20 @@ def _llm_script(title: str, topic: str, seconds: int, settings: Settings, style_
     )
     if style_hint:
         user += f"\nStyle notes: {style_hint}"
-    resp = requests.post(
-        f"{settings.llm_base_url}/chat/completions",
-        headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-        json={
-            "model": settings.llm_model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "temperature": 0.8,
-        },
-        timeout=90,
-    )
+    resp = None
+    for model in _models(settings):
+        resp = requests.post(
+            f"{settings.llm_base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+            json={
+                "model": model,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                "temperature": 0.8,
+            },
+            timeout=90,
+        )
+        if resp.status_code not in (404, 429):  # model retired or out of free quota: try the next one
+            break
     resp.raise_for_status()
     content = resp.json()["choices"][0]["message"]["content"]
     return parse_scenes(content)

@@ -17,7 +17,7 @@ class Settings:
     # Any OpenAI-compatible chat endpoint works (Gemini, Groq, OpenRouter, ...).
     llm_api_key: str = ""
     llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
-    llm_model: str = "gemini-2.5-flash"
+    llm_model: str = "gemini-3.8-flash"
     # Free keys for stock footage. Either one is enough; both can be set.
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
