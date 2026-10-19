@@ -36,7 +36,8 @@ def make_script(
         try:
             return _llm_script(title, topic, seconds, settings, style_hint), warnings
         except Exception as exc:  # network, quota, bad JSON: never kill the job
-            warnings.append(f"Script writer unavailable, used a template instead ({exc.__class__.__name__}).")
+            code = getattr(getattr(exc, "response", None), "status_code", "")
+            warnings.append(f"Script writer unavailable, used a template instead ({exc.__class__.__name__} {code}).".replace(" )", ")"))
     else:
         warnings.append("No script key set, used a template script. Add FRIDAY_LLM_API_KEY for real scripts.")
     return demo_script(title, topic, seconds), warnings
@@ -48,7 +49,10 @@ def _llm_script(title: str, topic: str, seconds: int, settings: Settings, style_
     system = (
         "You write narration for short vertical videos. Reply with JSON only, no prose, "
         'in the shape {"scenes":[{"narration":"...","keywords":"..."}]}. '
-        "Each keywords value is 1 to 3 plain words describing footage to show (concrete things you can film)."
+        "Each keywords value is 2 to 3 English words for a stock-footage search that shows exactly what "
+        "that scene's narration says: a concrete, filmable subject plus its setting or action "
+        '(for example "woman stretching bedroom", "glass of water", "city traffic night"). '
+        "Never use abstract words like success, mindset, tips or growth; picture the idea as a real scene."
     )
     user = (
         f"Title: {title}\nTopic: {topic}\n"
