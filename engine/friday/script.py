@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 
 import requests
@@ -43,6 +44,8 @@ def make_script(
     return demo_script(title, topic, seconds), warnings
 
 
+# Model retired (404), out of free quota (429) or the service is busy (5xx): try the next one.
+RETRY_STATUS = {404, 429, 500, 502, 503, 504}
 GEMINI_FALLBACKS = ["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
 
 
@@ -74,19 +77,25 @@ def _llm_script(title: str, topic: str, seconds: int, settings: Settings, style_
     if style_hint:
         user += f"\nStyle notes: {style_hint}"
     resp = None
-    for model in _models(settings):
-        resp = requests.post(
-            f"{settings.llm_base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-            json={
-                "model": model,
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "temperature": 0.8,
-            },
-            timeout=90,
-        )
-        if resp.status_code not in (404, 429):  # model retired or out of free quota: try the next one
-            break
+    for attempt in range(3):  # busy servers clear quickly, so go round the models a few times
+        for model in _models(settings):
+            resp = requests.post(
+                f"{settings.llm_base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    "temperature": 0.8,
+                },
+                timeout=90,
+            )
+            if resp.status_code not in RETRY_STATUS:
+                break
+        else:
+            if attempt < 2:
+                time.sleep(4 * (attempt + 1))
+            continue
+        break
     resp.raise_for_status()
     content = resp.json()["choices"][0]["message"]["content"]
     return parse_scenes(content)

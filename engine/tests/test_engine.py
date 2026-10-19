@@ -168,3 +168,26 @@ class ModelFallbackTests(unittest.TestCase):
         self.assertGreater(len(script._models(g)), 1)
         other = dataclasses.replace(g, llm_base_url="https://api.groq.com/openai/v1", llm_model="x")
         self.assertEqual(script._models(other), ["x"])
+
+
+class LlmRetryTests(unittest.TestCase):
+    def test_busy_server_is_retried_then_succeeds(self):
+        import dataclasses
+        from unittest import mock
+        from friday import config, script
+
+        class R:
+            def __init__(self, code, body=None):
+                self.status_code, self._b = code, body
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(self.status_code)
+            def json(self):
+                return self._b
+
+        good = {"choices": [{"message": {"content": '{"scenes":[{"narration":"Hi there.","keywords":"cat sleeping"}]}'}}]}
+        seq = iter([R(503), R(503), R(429), R(404), R(200, good)])
+        s = dataclasses.replace(config.Settings(), llm_api_key="k")
+        with mock.patch.object(script.requests, "post", lambda *a, **k: next(seq)), mock.patch.object(script.time, "sleep"):
+            scenes = script._llm_script("T", "t", 30, s, "")
+        self.assertEqual(scenes[0].keywords, "cat sleeping")
