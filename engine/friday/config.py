@@ -21,6 +21,8 @@ class Settings:
     # Free keys for stock footage. Either one is enough; both can be set.
     pexels_api_key: str = ""
     pixabay_api_key: str = ""
+    # Openly licensed libraries (NASA, Wikimedia Commons, Internet Archive). No key needed.
+    open_sources: bool = False
     # edge-tts voice name. Free, no key.
     voice: str = "en-US-AndrewNeural"
     # Caption font family (must exist on the machine doing the render).
@@ -60,6 +62,7 @@ def load() -> Settings:
         llm_model=env("FRIDAY_LLM_MODEL", defaults.llm_model),
         pexels_api_key=env("PEXELS_API_KEY"),
         pixabay_api_key=env("PIXABAY_API_KEY"),
+        open_sources=env("FRIDAY_OPEN_SOURCES", "1").lower() not in ("0", "false", "no", "off"),
         voice=env("FRIDAY_VOICE", defaults.voice),
         caption_font=env("FRIDAY_CAPTION_FONT", defaults.caption_font),
         render_scale=float(env("FRIDAY_RENDER_SCALE", "1.0")),

@@ -1,4 +1,4 @@
-"""Stock footage from Pexels or Pixabay (both free with an account).
+"""Footage: stock (Pexels, Pixabay) plus openly licensed libraries (see openlib.py).
 
 fetch_clip() tries each provider that has a key and returns (path, provider)
 for the first usable clip, or None so the caller can fall back to a generated
@@ -11,6 +11,7 @@ from pathlib import Path
 
 import requests
 
+from . import openlib
 from .config import Settings
 
 PEXELS_SEARCH = "https://api.pexels.com/videos/search"
@@ -26,25 +27,48 @@ def fetch_clip(
     dest: Path,
     settings: Settings,
     used: Used,
+    search: str = "",
+    real: bool = False,
+    open_libs: bool = False,
 ) -> tuple[Path, str] | None:
-    if not keywords.strip():
+    """Find and download one clip. Returns (path, credit) or None.
+
+    `real` marks a scene about a specific real event, place or person: the openly
+    licensed libraries are tried first, using `search` (names allowed there).
+    Otherwise stock footage comes first and the libraries are only a fallback.
+    """
+    if not keywords.strip() and not search.strip():
         return None
     portrait = aspect == "9:16"
-    providers = []
-    if settings.pexels_api_key:
-        providers.append(("Pexels", _pexels))
-    if settings.pixabay_api_key:
-        providers.append(("Pixabay", _pixabay))
-    for name, search in providers:
+    stock = []
+    if keywords.strip():
+        if settings.pexels_api_key:
+            stock.append(("Pexels", _pexels))
+        if settings.pixabay_api_key:
+            stock.append(("Pixabay", _pixabay))
+    attempts = [(name, fn, keywords, False) for name, fn in stock]
+    if open_libs and settings.open_sources:
+        text = search.strip() or keywords
+        libs = [(n, f, text, True) for n, f in openlib.LIBRARIES.items() if real or n != "Internet Archive"]
+        attempts = libs + attempts if real else attempts + libs
+    for name, fn, text, is_open in attempts:
         try:
-            hit = search(keywords, portrait, settings, used)
-            if hit:
-                clip_id, url = hit
-                _download(url, dest)
-                used.add((name, clip_id))
-                return dest, name
+            if is_open:
+                hit = fn(text, portrait, used)
+                if hit:
+                    clip_id, url, credit = hit
+                    _download(url, dest, openlib.MAX_BYTES)
+                    used.add((name, clip_id))
+                    return dest, credit
+            else:
+                hit = fn(text, portrait, settings, used)
+                if hit:
+                    clip_id, url = hit
+                    _download(url, dest)
+                    used.add((name, clip_id))
+                    return dest, name
         except Exception:
-            continue  # network, quota, odd response: try the next provider
+            continue  # network, quota, odd response: try the next source
     return None
 
 
@@ -108,9 +132,15 @@ def _pick_pixabay_file(videos: dict) -> tuple[str, int, int] | None:
     return None
 
 
-def _download(url: str, dest: Path) -> None:
-    with requests.get(url, stream=True, timeout=60) as r:
+def _download(url: str, dest: Path, max_bytes: int | None = None) -> None:
+    with requests.get(url, stream=True, timeout=60, headers=openlib.HEADERS) as r:
         r.raise_for_status()
+        if max_bytes and int(r.headers.get("Content-Length") or 0) > max_bytes:
+            raise ValueError("clip too large")
+        written = 0
         with open(dest, "wb") as fh:
             for chunk in r.iter_content(chunk_size=1 << 16):
+                written += len(chunk)
+                if max_bytes and written > max_bytes:
+                    raise ValueError("clip too large")
                 fh.write(chunk)

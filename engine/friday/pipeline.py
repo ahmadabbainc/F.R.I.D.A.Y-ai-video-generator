@@ -86,16 +86,28 @@ def generate(req: Request, out: Path, settings: Settings, progress: Progress | N
             silent_scenes += 0 if spoken else 1
             duration = round(speech + 0.45, 3)  # small breath between scenes
 
+            queries = _queries(scene.keywords, title)
             found = None
-            for query in _queries(scene.keywords, title):
-                found = footage.fetch_clip(query, aspect, work / f"clip_{i}.mp4", settings, used)
+            for n, query in enumerate(queries):
+                # Open libraries go first for "real" scenes, and last (as a fallback) for everything else.
+                use_open = (scene.real and n == 0) or (not scene.real and n == len(queries) - 1)
+                found = footage.fetch_clip(
+                    query, aspect, work / f"clip_{i}.mp4", settings, used,
+                    search=scene.search if (scene.real and n == 0) else "", real=scene.real and n == 0, open_libs=use_open,
+                )
                 if found:
                     break
             clip = found[0] if found else None
             if found:
                 credits.add(found[1])
             seg = work / f"seg_{i}.mp4"
-            render.build_segment(clip, i, duration, w, h, seg)
+            try:
+                render.build_segment(clip, i, duration, w, h, seg)
+            except render.RenderError:
+                if clip is None:
+                    raise
+                credits.discard(found[1])  # unreadable clip: use a generated background instead
+                render.build_segment(None, i, duration, w, h, seg)
             segments.append(seg)
 
             padded = work / f"audio_{i}.wav"
@@ -109,7 +121,7 @@ def generate(req: Request, out: Path, settings: Settings, progress: Progress | N
             warnings.append("Voice service unreachable, so this video is silent. Captions are still burned in.")
         elif silent_scenes:
             warnings.append(f"{silent_scenes} of {total} scenes had no voice because the voice service failed. Try again.")
-        if not settings.live_footage:
+        if not settings.live_footage and not credits:
             warnings.append("No footage key set, used generated backgrounds. Add PIXABAY_API_KEY (or PEXELS_API_KEY) for stock footage.")
         elif not credits:
             warnings.append("Couldn't fetch stock footage (key rejected, no matches, or the service was down), so generated backgrounds were used.")

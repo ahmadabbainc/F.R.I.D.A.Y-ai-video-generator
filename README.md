@@ -36,6 +36,15 @@ Type a title, press **Generate video**. The topic is optional; leave it empty an
 
 A video takes a few minutes. You can close the page while it renders; reopen it and it picks up the same job. Finished videos are published as releases on this repository (the newest 20 are kept).
 
+## Footage sources
+
+Friday searches several places for each scene and only keeps clips it is allowed to reuse:
+
+- **Stock** (Pixabay, and Pexels if you have a key) for everyday scenes.
+- **Openly licensed libraries**, no key needed: NASA, Wikimedia Commons and the Internet Archive. For scenes about a specific real event or place Friday tries these first. Only public domain, CC0 and CC BY clips are used (never NC, ND or SA), and each clip's author and licence are listed in the video's notes. Set the variable `FRIDAY_OPEN_SOURCES` to `0` to turn them off.
+
+Friday does not download from YouTube, Reddit or other sites whose content belongs to the people who posted it.
+
 ## Things to know
 
 - **Videos are public.** Releases on a public repository can be opened by anyone with the link. Don't generate anything private. A private repository would hide them but GitHub Pages then needs a paid plan.
@@ -47,7 +56,7 @@ A video takes a few minutes. You can close the page while it renders; reopen it 
 
 Checked so far: the engine renders real H.264 and AAC video in demo mode (title, captions, both formats); the script, captions and style-learning logic have tests; the app was exercised in a browser against a simulated GitHub API at phone and desktop sizes, including failures and resuming.
 
-Not yet checked against the real services: the first live run on GitHub Actions, real edge-tts voices, Pexels footage, a live script key, and YouTube caption fetching. The CI workflow runs the engine tests (including the API server) on every push.
+Not yet checked against the real services: the NASA, Wikimedia Commons and Internet Archive lookups (tested with simulated responses only), and YouTube caption fetching. The CI workflow runs the engine tests (including the API server) on every push.
 
 ## Run it locally
 

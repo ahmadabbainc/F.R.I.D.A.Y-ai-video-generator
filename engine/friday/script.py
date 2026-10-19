@@ -18,6 +18,8 @@ WORDS_PER_SECOND = 2.5  # about 150 words a minute
 class Scene:
     narration: str
     keywords: str
+    search: str = ""  # names allowed: used only for the open footage libraries
+    real: bool = False  # True when the scene is about a specific real event, place or person
 
 
 def scene_count(seconds: int) -> int:
@@ -62,14 +64,18 @@ def _llm_script(title: str, topic: str, seconds: int, settings: Settings, style_
     words = int(seconds * WORDS_PER_SECOND)
     system = (
         "You write narration for short vertical videos. Reply with JSON only, no prose, "
-        'in the shape {"scenes":[{"narration":"...","keywords":"..."}]}. '
+        'in the shape {"scenes":[{"narration":"...","keywords":"...","kind":"stock","search":""}]}. '
         "Each keywords value is 2 to 3 English words for a stock-footage search that shows exactly what "
         "that scene's narration says: a concrete, filmable subject plus its setting or action "
         '(for example "woman stretching bedroom", "glass of water", "city traffic night"). '
         "Never use abstract words like success, mindset, tips or growth; picture the idea as a real scene. "
         "Stock libraries have no footage of specific people, brands or companies, so never put a name in keywords: "
         'for a person or company show their world instead (for Elon Musk: "rocket launch", "electric car", "tech engineers"). '
-        "Never ask for cartoons or animation."
+        "Never ask for cartoons or animation. "
+        'Set "kind" to "real" only when the scene is about a specific real event, place, organisation or person '
+        'that has real documentary footage (a rocket launch, a historic event, a landmark), and then put a short '
+        'proper-noun search in "search" (for example "SpaceX Falcon 9 launch"). Otherwise use "stock" and leave "search" empty. '
+        'Keywords must always stay name-free so a stock search still works.'
     )
     user = (
         f"Title: {title}\nTopic: {topic}\n"
@@ -112,7 +118,12 @@ def parse_scenes(content: str) -> list[Scene]:
     start, end = text.find("{"), text.rfind("}")
     data = json.loads(text[start : end + 1])
     scenes = [
-        Scene(str(s["narration"]).strip(), str(s.get("keywords", "")).strip())
+        Scene(
+            str(s["narration"]).strip(),
+            str(s.get("keywords", "")).strip(),
+            str(s.get("search", "")).strip(),
+            str(s.get("kind", "")).strip().lower() == "real",
+        )
         for s in data["scenes"]
         if str(s.get("narration", "")).strip()
     ]
