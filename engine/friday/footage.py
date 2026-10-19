@@ -82,6 +82,7 @@ def _pixabay(keywords: str, portrait: bool, settings: Settings, used: Used) -> t
     )
     resp.raise_for_status()
     candidates = []
+    wanted = {w.lower().rstrip("s") for w in keywords.split() if len(w) > 2}
     for hit in resp.json().get("hits", []):
         if ("Pixabay", hit["id"]) in used:
             continue
@@ -89,11 +90,13 @@ def _pixabay(keywords: str, portrait: bool, settings: Settings, used: Used) -> t
         if pick:
             url, width, height = pick
             # Pixabay has no orientation filter, so rank matching clips first.
-            candidates.append((0 if (height > width) == portrait else 1, hit["id"], url))
+            tags = {t.strip().lower().rstrip("s") for t in str(hit.get("tags", "")).replace(" ", ",").split(",") if t.strip()}
+            relevance = len(wanted & tags)  # how many of the scene's words the clip is tagged with
+            candidates.append((-relevance, 0 if (height > width) == portrait else 1, hit["id"], url))
     if not candidates:
         return None
-    candidates.sort(key=lambda c: c[0])  # stable: keeps Pixabay's popularity order within a group
-    return candidates[0][1], candidates[0][2]
+    candidates.sort(key=lambda c: c[:2])  # best tag match, then orientation; stable keeps popularity order
+    return candidates[0][2], candidates[0][3]
 
 
 def _pick_pixabay_file(videos: dict) -> tuple[str, int, int] | None:

@@ -41,6 +41,7 @@ PIXABAY = {
         {"id": 1, "videos": {"large": vid(3840, 2160), "medium": vid(1920, 1080, "https://cdn.example/land1.mp4")}},
         {"id": 2, "videos": {"large": {"url": "", "width": 0, "height": 0}, "medium": vid(1080, 1920, "https://cdn.example/port2.mp4")}},
         {"id": 3, "videos": {"medium": {"url": ""}, "small": {"url": ""}}},  # nothing usable
+        {"id": 5, "tags": "cooking, kitchen, dinner", "videos": {"medium": vid(1920, 1080, "https://cdn.example/tagged5.mp4")}},
         {"id": 4, "videos": {"medium": vid(1080, 1920, "https://cdn.example/port4.mp4")}},
     ]
 }
@@ -164,3 +165,13 @@ class PipelineFootageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TagRelevanceTests(unittest.TestCase):
+    def test_clip_tagged_with_the_scene_words_wins(self):
+        get, calls = fake_network()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(footage.requests, "get", get):
+            s = dataclasses.replace(config.Settings(), pixabay_api_key="k")
+            r = footage.fetch_clip("cooking dinner", "9:16", Path(tmp) / "c.mp4", s, set())
+        self.assertEqual(r[1], "Pixabay")
+        self.assertIn("https://cdn.example/tagged5.mp4", calls)
