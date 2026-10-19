@@ -199,3 +199,6 @@ dialog label { margin-top: 6px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.kind-hint { margin: -6px 0 2px; font-size: 14px; color: var(--moon-dim, #9a9cc8); }
+.layout[data-state="done"] .composer > .kind-hint { display: none; }

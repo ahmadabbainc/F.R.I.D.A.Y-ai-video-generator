@@ -51,6 +51,7 @@ class NewJob(BaseModel):
     aspect: str = "9:16"
     seconds: int = Field(default=45, ge=15, le=90)
     style_url: str = Field(default="", max_length=300)
+    kind: str = "footage"
 
 
 def _video_path(job_id: str):
@@ -64,7 +65,7 @@ def _run(job: Job, body: NewJob) -> None:
     job.status = "running"
     try:
         result = generate(
-            Request(body.title, body.topic, body.aspect, body.seconds, body.style_url),
+            Request(body.title, body.topic, body.aspect, body.seconds, body.style_url, body.kind if body.kind in ("footage", "explainer") else "footage"),
             _video_path(job.id),
             settings,
             progress,

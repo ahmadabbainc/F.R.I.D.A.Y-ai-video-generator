@@ -36,6 +36,15 @@ Type a title, press **Generate video**. The topic is optional; leave it empty an
 
 A video takes a few minutes. You can close the page while it renders; reopen it and it picks up the same job. Finished videos are published as releases on this repository (the newest 20 are kept).
 
+## Two kinds of video
+
+Pick the type before you press Generate:
+
+- **Footage**: real video clips matched to each line (stock and openly licensed libraries, below).
+- **Animated**: an explainer drawn entirely by code. The AI writes a storyboard, and Friday animates it: a title card, key sentences that pop in word by word, counting big numbers, bar charts, line charts, timelines and key-point lists. No stock footage is involved, so the pictures always match the voice.
+
+The AI writes any numbers, dates or statistics in animated videos, and Friday adds a note to check them before you publish. Without a script key, animated videos use simple text scenes only.
+
 ## Footage sources
 
 Friday searches several places for each scene and only keeps clips it is allowed to reuse:
@@ -56,7 +65,7 @@ Friday does not download from YouTube, Reddit or other sites whose content belon
 
 Checked so far: the engine renders real H.264 and AAC video in demo mode (title, captions, both formats); the script, captions and style-learning logic have tests; the app was exercised in a browser against a simulated GitHub API at phone and desktop sizes, including failures and resuming.
 
-Not yet checked against the real services: the NASA, Wikimedia Commons and Internet Archive lookups (tested with simulated responses only), and YouTube caption fetching. The CI workflow runs the engine tests (including the API server) on every push.
+Not yet checked against the real services: the NASA, Wikimedia Commons and Internet Archive lookups (tested with simulated responses only), the animated type on a real GitHub run, and YouTube caption fetching. The CI workflow runs the engine tests (including the API server) on every push.
 
 ## Run it locally
 

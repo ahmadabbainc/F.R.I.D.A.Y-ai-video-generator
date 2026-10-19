@@ -59,6 +59,32 @@ def _models(settings: Settings) -> list[str]:
     return models
 
 
+def chat(settings: Settings, system: str, user: str) -> str:
+    """One chat completion with retries across models. Returns the reply text; raises if all fail."""
+    resp = None
+    for attempt in range(3):  # busy servers clear quickly, so go round the models a few times
+        for model in _models(settings):
+            resp = requests.post(
+                f"{settings.llm_base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    "temperature": 0.8,
+                },
+                timeout=90,
+            )
+            if resp.status_code not in RETRY_STATUS:
+                break
+        else:
+            if attempt < 2:
+                time.sleep(4 * (attempt + 1))
+            continue
+        break
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+
 def _llm_script(title: str, topic: str, seconds: int, settings: Settings, style_hint: str) -> list[Scene]:
     n = scene_count(seconds)
     words = int(seconds * WORDS_PER_SECOND)
@@ -85,28 +111,7 @@ def _llm_script(title: str, topic: str, seconds: int, settings: Settings, style_
     )
     if style_hint:
         user += f"\nStyle notes: {style_hint}"
-    resp = None
-    for attempt in range(3):  # busy servers clear quickly, so go round the models a few times
-        for model in _models(settings):
-            resp = requests.post(
-                f"{settings.llm_base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-                json={
-                    "model": model,
-                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                    "temperature": 0.8,
-                },
-                timeout=90,
-            )
-            if resp.status_code not in RETRY_STATUS:
-                break
-        else:
-            if attempt < 2:
-                time.sleep(4 * (attempt + 1))
-            continue
-        break
-    resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
+    content = chat(settings, system, user)
     return parse_scenes(content)
 
 

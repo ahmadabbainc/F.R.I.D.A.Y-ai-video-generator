@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 
 # Pairs of colours for generated backgrounds, used when no stock clip is available.
@@ -53,6 +55,29 @@ def build_segment(clip: Path | None, index: int, duration: float, w: int, h: int
     except RenderError:
         src = f"color=c={c0}:s={w}x{h}:r=30:d={duration:.3f}"
         run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", src, *COMMON_OUT, str(out)])
+
+
+def encode_frames(frames: Iterable[bytes], w: int, h: int, out: Path) -> None:
+    """Pipe raw RGB frames into ffmpeg and encode them as one segment."""
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",
+           "-r", "30", "-i", "-", *COMMON_OUT, str(out)]
+    with tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=err)
+        try:
+            for frame in frames:
+                proc.stdin.write(frame)
+        except BrokenPipeError:
+            pass  # ffmpeg stopped early: its error is reported below
+        finally:
+            try:
+                proc.stdin.close()
+            except BrokenPipeError:
+                pass
+            code = proc.wait()
+        if code != 0:
+            err.seek(0)
+            tail = "\n".join(err.read().decode(errors="replace").strip().splitlines()[-6:])
+            raise RenderError(f"ffmpeg failed: {tail}")
 
 
 def build_scene_audio(voice: Path, duration: float, out: Path) -> None:

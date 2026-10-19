@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import math
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import captions, footage, inspire, render, script, voice
+from . import captions, explainer, footage, inspire, render, scenes, script, voice
 from .config import Settings
 
 Progress = Callable[[int, str], None]
@@ -20,6 +21,7 @@ class Request:
     aspect: str = "9:16"  # "9:16" or "16:9"
     seconds: int = 45
     style_url: str = ""
+    kind: str = "footage"  # "footage" (stock clips) or "explainer" (animated, drawn by code)
 
 
 @dataclass
@@ -39,6 +41,44 @@ def _queries(keywords: str, title: str) -> list[str]:
         out.append(theme)
     seen: list[str] = []
     return [q for q in out if q.strip() and not (q in seen or seen.append(q))]
+
+
+def _explainer(title, topic, seconds, aspect, out, work, settings, step, warnings, style_hint, rate) -> Result:
+    """Animated explainer: every scene is drawn by code from the storyboard."""
+    step(10, "Writing the storyboard")
+    beats, warns = explainer.make_storyboard(title, topic, seconds, settings, style_hint)
+    warnings += warns
+    w, h = render.dimensions(aspect, settings.render_scale)
+    segments, audios, timed = [], [], []
+    silent, cursor, total = 0, 0.0, len(beats)
+    for i, beat in enumerate(beats):
+        step(20 + int(60 * i / total), f"Animating scene {i + 1} of {total}")
+        audio_path, speech, spoken = voice.synthesize(beat.narration, work / f"voice_{i}", settings, rate)
+        silent += 0 if spoken else 1
+        frames = max(1, math.ceil((speech + 0.45) * scenes.FPS))
+        duration = frames / scenes.FPS  # whole frames, so picture and sound stay in step
+        seg = work / f"seg_{i}.mp4"
+        try:
+            render.encode_frames(scenes.render_frames(beat.type, beat.data, duration, cursor, w, h), w, h, seg)
+        except Exception:  # one bad scene must not sink the video: show its words plainly instead
+            fallback = {"text": beat.narration[:130], "highlight": []}
+            render.encode_frames(scenes.render_frames("statement", fallback, duration, cursor, w, h), w, h, seg)
+        segments.append(seg)
+        padded = work / f"audio_{i}.wav"
+        render.build_scene_audio(audio_path, duration, padded)
+        audios.append(padded)
+        timed.append(captions.Timed(cursor, speech, beat.narration))
+        cursor += duration
+    if silent == total:
+        warnings.append("Voice service unreachable, so this video is silent. Captions are still burned in.")
+    elif silent:
+        warnings.append(f"{silent} of {total} scenes had no voice because the voice service failed. Try again.")
+    step(85, "Adding captions and rendering")
+    (work / "captions.ass").write_text(captions.build_ass(timed, w, h, settings.caption_font), encoding="utf-8")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    render.assemble(segments, audios, "captions.ass", out, work)
+    step(100, "Done")
+    return Result(out, cursor, total, warnings)
 
 
 def generate(req: Request, out: Path, settings: Settings, progress: Progress | None = None) -> Result:
@@ -65,6 +105,9 @@ def generate(req: Request, out: Path, settings: Settings, progress: Progress | N
                 warnings.append(warn)
             if profile:
                 style_hint, rate = profile.hint(), profile.voice_rate_percent
+
+        if req.kind == "explainer":
+            return _explainer(title, topic, seconds, aspect, out, work, settings, step, warnings, style_hint, rate)
 
         step(10, "Writing the script")
         scenes, warns = script.make_script(title, topic, seconds, settings, style_hint)

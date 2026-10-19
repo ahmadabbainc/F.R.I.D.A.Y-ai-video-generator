@@ -34,6 +34,15 @@
     </section>
 
     <form class="composer" id="composer" novalidate>
+      <div class="row">
+        <fieldset class="seg" id="kind-seg">
+          <legend>Type</legend>
+          <label><input type="radio" name="kind" value="footage" checked><span>Footage</span></label>
+          <label><input type="radio" name="kind" value="explainer"><span>Animated</span></label>
+        </fieldset>
+      </div>
+      <p class="kind-hint" id="kind-hint">Real video clips matched to every line.</p>
+
       <div class="field">
         <label for="title">Title</label>
         <input id="title" name="title" type="text" maxlength="120" autocomplete="off" placeholder="How to save money on groceries" required>

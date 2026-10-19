@@ -30,6 +30,11 @@ on:
         required: false
         type: string
         default: ""
+      kind:
+        description: "footage or explainer"
+        required: false
+        type: string
+        default: "footage"
 
 permissions:
   contents: write # publishes the finished video as a release
@@ -72,6 +77,7 @@ jobs:
           ASPECT: ${{ inputs.aspect }}
           SECONDS_LONG: ${{ inputs.seconds }}
           STYLE_URL: ${{ inputs.style_url }}
+          KIND: ${{ inputs.kind }}
           FRIDAY_LLM_API_KEY: ${{ secrets.FRIDAY_LLM_API_KEY }}
           FRIDAY_LLM_BASE_URL: ${{ vars.FRIDAY_LLM_BASE_URL }}
           FRIDAY_LLM_MODEL: ${{ vars.FRIDAY_LLM_MODEL }}
@@ -83,7 +89,7 @@ jobs:
           [[ "$JOB_ID" =~ ^[a-f0-9]{12}$ ]] || { echo "Bad job id"; exit 1; }
           python -m friday render \
             --title "$TITLE" --topic "$TOPIC" --aspect "$ASPECT" \
-            --seconds "$SECONDS_LONG" --style-url "$STYLE_URL" \
+            --seconds "$SECONDS_LONG" --style-url "$STYLE_URL" --kind "$KIND" \
             --out "$RUNNER_TEMP/video.mp4" --notes "$RUNNER_TEMP/notes.txt"
 
       - name: Publishing your video

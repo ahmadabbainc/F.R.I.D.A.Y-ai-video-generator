@@ -140,7 +140,7 @@
           ref: this.branch,
           inputs: {
             job_id: id, title: body.title, topic: body.topic,
-            aspect: body.aspect, seconds: String(body.seconds), style_url: body.style_url,
+            aspect: body.aspect, seconds: String(body.seconds), style_url: body.style_url, kind: body.kind,
           },
         }),
       });
@@ -249,6 +249,11 @@
 
   form.addEventListener("change", (e) => {
     if (e.target.name === "aspect") layout.dataset.aspect = e.target.value;
+    if (e.target.name === "kind") {
+      $("kind-hint").textContent = e.target.value === "explainer"
+        ? "Animated charts, numbers and text drawn by code. No stock clips."
+        : "Real video clips matched to every line.";
+    }
   });
 
   // ---------- connection status ----------
@@ -291,6 +296,7 @@
     const body = {
       title,
       topic: els.topic.value.trim(),
+      kind: data.get("kind") || "footage",
       aspect: data.get("aspect"),
       seconds: Number(data.get("seconds")),
       style_url: els.styleUrl.value.trim(),
