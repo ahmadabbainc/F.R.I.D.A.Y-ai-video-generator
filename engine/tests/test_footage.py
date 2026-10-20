@@ -177,3 +177,25 @@ class TagRelevanceTests(unittest.TestCase):
             r = footage.fetch_clip("cooking dinner", "9:16", Path(tmp) / "c.mp4", s, set())
         self.assertEqual(r[1], "Pixabay")
         self.assertIn("https://cdn.example/tagged5.mp4", calls)
+
+
+class ClipLengthTests(unittest.TestCase):
+    def test_clips_long_enough_for_the_scene_are_preferred(self):
+        hits = {"hits": [
+            {"id": 1, "duration": 3, "videos": {"medium": vid(1080, 1920, "https://cdn.example/short.mp4")}},
+            {"id": 2, "duration": 12, "videos": {"medium": vid(1080, 1920, "https://cdn.example/long.mp4")}},
+        ]}
+        get, calls = fake_network(pixabay=hits)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(footage.requests, "get", get):
+            s = dataclasses.replace(config.Settings(), pixabay_api_key="k")
+            footage.fetch_clip("x", "9:16", Path(tmp) / "c.mp4", s, set(), min_seconds=6.0)
+        self.assertIn("https://cdn.example/long.mp4", calls)
+        self.assertNotIn("https://cdn.example/short.mp4", calls)
+
+    def test_a_short_clip_is_still_used_when_nothing_longer_exists(self):
+        hits = {"hits": [{"id": 1, "duration": 3, "videos": {"medium": vid(1080, 1920, "https://cdn.example/short.mp4")}}]}
+        get, calls = fake_network(pixabay=hits)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(footage.requests, "get", get):
+            s = dataclasses.replace(config.Settings(), pixabay_api_key="k")
+            r = footage.fetch_clip("x", "9:16", Path(tmp) / "c.mp4", s, set(), min_seconds=6.0)
+        self.assertIsNotNone(r)

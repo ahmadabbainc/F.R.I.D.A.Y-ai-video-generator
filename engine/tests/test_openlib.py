@@ -70,7 +70,7 @@ class RoutingTests(unittest.TestCase):
                 return (1, f"https://{name}/c.mp4", f"{name} credit")
             return f
 
-        def pixabay(q, portrait, settings, used):
+        def pixabay(q, portrait, settings, used, **kw):
             order.append(("Pixabay", q))
             return (2, "https://pix/c.mp4")
 

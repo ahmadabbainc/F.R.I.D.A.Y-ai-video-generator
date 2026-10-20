@@ -10,6 +10,10 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from friday import config, explainer, voice  # noqa: E402
+try:
+    from friday import scenes as _scenes_mod
+except ImportError:
+    _scenes_mod = None
 from friday.pipeline import Request, generate  # noqa: E402
 
 voice.PAUSE_SECONDS = 0
@@ -51,6 +55,24 @@ class SanitizeTests(unittest.TestCase):
         self.assertIsNone(explainer._num(True))
         self.assertIsNone(explainer._num(float("nan")))
         self.assertIsNone(explainer._num(1e30))
+
+    def test_new_scene_types_are_cleaned(self):
+        flow = self.beat(type="flow", data={"steps": ["Plan", {"label": "Build", "icon": "nonsense"}, {"label": ""}]})
+        self.assertEqual(flow.type, "flow")
+        self.assertEqual([x["label"] for x in flow.data["steps"]], ["Plan", "Build"])
+        self.assertTrue(all(x["icon"] in explainer.icons.ICONS for x in flow.data["steps"]))
+        bad = [dict(type="flow", data={"steps": ["only"]}), dict(type="compare", data={"left": {"label": "A"}}),
+               dict(type="orbit", data={"center": {"label": "C"}, "items": ["a", "b"]}), dict(type="orbit", data={"items": ["a", "b", "c"]})]
+        for kw in bad:
+            self.assertEqual(self.beat(**kw).type, "statement", kw)
+        ok = self.beat(type="orbit", data={"center": {"label": "C", "icon": "globe"}, "items": ["a", "b", "c", "d", "e", "f", "g"]})
+        self.assertEqual(len(ok.data["items"]), 6)
+        self.assertEqual(self.beat(type="icon", data={"label": "Money talks"}).data["icon"], "coins")  # guessed from the words
+        self.assertEqual(self.beat(type="icon", data={"label": "Plain words"}).data["icon"], "star")
+
+    def test_statements_get_a_matching_icon_automatically(self):
+        self.assertEqual(self.beat(type="statement", data={"text": "Save money every month"}).data["icon"], "coins")
+        self.assertEqual(self.beat(type="statement", data={"text": "Nothing special here"}).data["icon"], "")
 
     def test_text_is_trimmed_and_missing_narration_dropped(self):
         b = self.beat(type="statement", data={"text": "x" * 500})
@@ -94,7 +116,21 @@ class RenderTests(unittest.TestCase):
         "line": {"title": "T", "points": [{"label": str(i), "value": v} for i, v in enumerate([5, 5, 5, 5])], "prefix": "", "suffix": ""},
         "timeline": {"title": "T", "events": [{"when": "2000", "what": "a" * 80}, {"when": "2001", "what": "b"}]},
         "points": {"title": "T", "items": ["x" * 90, "y"]},
+        "icon": {"icon": "rocket", "label": "A long caption that needs to wrap over a couple of lines", "caption": "more words"},
+        "flow": {"title": "T", "steps": [{"icon": "cart", "label": "Buy"}, {"icon": "gear", "label": "A longer step name"}, {"icon": "check", "label": "Done"}]},
+        "compare": {"title": "T", "left": {"label": "A", "icon": "house", "points": ["one", "two", "three"]}, "right": {"label": "B", "icon": "coins", "points": []}},
+        "orbit": {"label": "Idea", "icon": "bulb", "items": ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"]},
     }
+
+    def test_statement_with_each_icon_draws(self):
+        for name in scenes.icons.ICONS:
+            for t in (0.0, 0.3, 2.0):
+                scenes.render_frame("statement", {"text": "Words go here", "highlight": [], "icon": name}, t, 4.0, 3.0, 216, 384)
+
+    def test_swipe_transition_and_camera_change_the_picture(self):
+        a = scenes.render_frame("statement", self.SAMPLES["statement"], 0.2, 4.0, 3.0, 216, 384).tobytes()
+        b = scenes.render_frame("statement", self.SAMPLES["statement"], 0.2, 4.0, 0.0, 216, 384).tobytes()
+        self.assertNotEqual(a, b)  # a swipe plays on every scene after the first
 
     def test_every_scene_draws_at_both_shapes_and_all_times(self):
         for kind, data in self.SAMPLES.items():

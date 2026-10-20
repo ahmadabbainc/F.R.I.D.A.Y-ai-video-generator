@@ -30,6 +30,7 @@ def fetch_clip(
     search: str = "",
     real: bool = False,
     open_libs: bool = False,
+    min_seconds: float = 0.0,
 ) -> tuple[Path, str] | None:
     """Find and download one clip. Returns (path, credit) or None.
 
@@ -61,7 +62,7 @@ def fetch_clip(
                     used.add((name, clip_id))
                     return dest, credit
             else:
-                hit = fn(text, portrait, settings, used)
+                hit = fn(text, portrait, settings, used, min_seconds=min_seconds)
                 if hit:
                     clip_id, url = hit
                     _download(url, dest)
@@ -72,7 +73,7 @@ def fetch_clip(
     return None
 
 
-def _pexels(keywords: str, portrait: bool, settings: Settings, used: Used) -> tuple[int, str] | None:
+def _pexels(keywords: str, portrait: bool, settings: Settings, used: Used, min_seconds: float = 0.0) -> tuple[int, str] | None:
     resp = requests.get(
         PEXELS_SEARCH,
         headers={"Authorization": settings.pexels_api_key},
@@ -80,13 +81,18 @@ def _pexels(keywords: str, portrait: bool, settings: Settings, used: Used) -> tu
         timeout=30,
     )
     resp.raise_for_status()
+    options = []
     for video in resp.json().get("videos", []):
         if ("Pexels", video["id"]) in used:
             continue
         link = _pick_pexels_file(video.get("video_files", []))
         if link:
-            return video["id"], link
-    return None
+            too_short = 1 if float(video.get("duration") or 0) < min_seconds else 0  # short clips would visibly loop
+            options.append((too_short, video["id"], link))
+    if not options:
+        return None
+    best = min(options, key=lambda o: o[0])  # stable: keeps Pexels' order within a group
+    return best[1], best[2]
 
 
 def _pick_pexels_file(files: list[dict]) -> str | None:
@@ -98,7 +104,7 @@ def _pick_pexels_file(files: list[dict]) -> str | None:
     return mp4s[0]["link"]
 
 
-def _pixabay(keywords: str, portrait: bool, settings: Settings, used: Used) -> tuple[int, str] | None:
+def _pixabay(keywords: str, portrait: bool, settings: Settings, used: Used, min_seconds: float = 0.0) -> tuple[int, str] | None:
     resp = requests.get(
         PIXABAY_SEARCH,
         params={"key": settings.pixabay_api_key, "q": keywords[:100], "per_page": 20, "safesearch": "true", "video_type": "film"},
@@ -116,11 +122,12 @@ def _pixabay(keywords: str, portrait: bool, settings: Settings, used: Used) -> t
             # Pixabay has no orientation filter, so rank matching clips first.
             tags = {t.strip().lower().rstrip("s") for t in str(hit.get("tags", "")).replace(" ", ",").split(",") if t.strip()}
             relevance = len(wanted & tags)  # how many of the scene's words the clip is tagged with
-            candidates.append((-relevance, 0 if (height > width) == portrait else 1, hit["id"], url))
+            too_short = 1 if float(hit.get("duration") or 0) < min_seconds else 0  # short clips would visibly loop
+            candidates.append((-relevance, too_short, 0 if (height > width) == portrait else 1, hit["id"], url))
     if not candidates:
         return None
-    candidates.sort(key=lambda c: c[:2])  # best tag match, then orientation; stable keeps popularity order
-    return candidates[0][2], candidates[0][3]
+    candidates.sort(key=lambda c: c[:3])  # best tag match, then long enough, then orientation; stable keeps popularity order
+    return candidates[0][3], candidates[0][4]
 
 
 def _pick_pixabay_file(videos: dict) -> tuple[str, int, int] | None:

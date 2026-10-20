@@ -41,7 +41,7 @@ A video takes a few minutes. You can close the page while it renders; reopen it 
 Pick the type before you press Generate:
 
 - **Footage**: real video clips matched to each line (stock and openly licensed libraries, below).
-- **Animated**: an explainer drawn entirely by code. The AI writes a storyboard, and Friday animates it: a title card, key sentences that pop in word by word, counting big numbers, bar charts, line charts, timelines and key-point lists. No stock footage is involved, so the pictures always match the voice.
+- **Animated**: motion graphics drawn entirely by code, with no stock footage, so the pictures always match the voice. The AI writes a storyboard and Friday animates it: a rocket that flies, coins that drop, gears that turn, a spinning globe, a beating heart and other animated icons; flow diagrams with pulses of light travelling between steps; side-by-side comparisons; concept maps with ideas orbiting a centre; kinetic text; counting numbers; bar and line charts; timelines. There are drifting particles, a slow camera push-in and colour-swipe transitions. Scenes are never shorter than about three and a half seconds, so every animation finishes.
 
 The AI writes any numbers, dates or statistics in animated videos, and Friday adds a note to check them before you publish. Without a script key, animated videos use simple text scenes only.
 

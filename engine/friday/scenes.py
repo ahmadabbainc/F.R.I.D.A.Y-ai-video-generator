@@ -12,247 +12,16 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterator
-from dataclasses import dataclass
-from functools import lru_cache
-from pathlib import Path
 
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
-FPS = 30
+from . import icons
 
-# Palette: matches the app (deep navy, amber accent).
-BG_TOP, BG_BOTTOM = (17, 16, 38), (9, 9, 22)
-TEXT = (244, 244, 252)
-MUTED = (150, 152, 196)
-ACCENT = (255, 184, 61)
-CYAN = (86, 204, 242)
-VIOLET = (139, 124, 255)
-GREEN = (52, 211, 153)
-CARD = (33, 32, 64)
-GRID = (48, 48, 86)
-
-_FONT_DIRS = ["/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/dejavu", "/Library/Fonts", "C:/Windows/Fonts"]
-_FONT_FILES = {False: ("DejaVuSans.ttf", "Arial.ttf", "arial.ttf"), True: ("DejaVuSans-Bold.ttf", "Arial Bold.ttf", "arialbd.ttf")}
-
-
-# ---------------------------------------------------------------- small helpers
-
-def clamp01(v: float) -> float:
-    return 0.0 if v < 0 else 1.0 if v > 1 else v
-
-
-def seg(t: float, start: float, end: float) -> float:
-    """Progress 0..1 of time t between start and end."""
-    return clamp01((t - start) / max(1e-6, end - start))
-
-
-def ease_out(p: float) -> float:
-    return 1 - (1 - p) ** 3
-
-
-def ease_in_out(p: float) -> float:
-    return 3 * p * p - 2 * p * p * p
-
-
-def ease_back(p: float) -> float:
-    """Ease out with a small overshoot, for words that pop in."""
-    c1, c3 = 1.4, 2.4
-    return 1 + c3 * (p - 1) ** 3 + c1 * (p - 1) ** 2
-
-
-@lru_cache(maxsize=64)
-def font(size: int, bold: bool = True) -> ImageFont.FreeTypeFont:
-    size = max(6, int(size))
-    for d in _FONT_DIRS:
-        for name in _FONT_FILES[bold]:
-            p = Path(d) / name
-            if p.exists():
-                return ImageFont.truetype(str(p), size)
-    return ImageFont.load_default(size)
-
-
-def wrap(text: str, size: int, bold: bool, max_w: float) -> list[str]:
-    f = font(size, bold)
-    lines, cur = [], ""
-    for word in text.split():
-        trial = f"{cur} {word}".strip()
-        if cur and f.getlength(trial) > max_w:
-            lines.append(cur)
-            cur = word
-        else:
-            cur = trial
-    if cur:
-        lines.append(cur)
-    return lines
-
-
-def fit_text(text: str, bold: bool, max_w: float, max_lines: int, start: int, floor: int) -> tuple[int, list[str]]:
-    """Largest font size (stepping down) whose wrapped text fits max_lines and max_w."""
-    size = start
-    while size > floor:
-        lines = wrap(text, size, bold, max_w)
-        f = font(size, bold)
-        if len(lines) <= max_lines and all(f.getlength(ln) <= max_w for ln in lines):
-            return size, lines
-        size = int(size * 0.92)
-    lines = wrap(text, floor, bold, max_w)
-    if len(lines) > max_lines:  # still too long: cut with an ellipsis rather than overflow
-        lines = lines[:max_lines]
-        lines[-1] = lines[-1].rstrip(" .,;") + "…"
-    return floor, lines
-
-
-def mix(a: tuple, b: tuple, p: float) -> tuple:
-    return tuple(int(a[i] + (b[i] - a[i]) * p) for i in range(3))
-
-
-# ---------------------------------------------------------------- layout and canvas
-
-@dataclass(frozen=True)
-class Layout:
-    w: int
-    h: int
-    u: float  # size unit
-    x0: float
-    x1: float
-    y0: float  # content area, kept clear of the burned-in captions
-    y1: float
-
-    @property
-    def cx(self) -> float:
-        return (self.x0 + self.x1) / 2
-
-    @property
-    def width(self) -> float:
-        return self.x1 - self.x0
-
-    @property
-    def height(self) -> float:
-        return self.y1 - self.y0
-
-
-def make_layout(w: int, h: int) -> Layout:
-    portrait = h > w
-    u = min(w, h) / 1080
-    if portrait:
-        return Layout(w, h, u, w * 0.08, w * 0.92, h * 0.095, h * 0.645)
-    return Layout(w, h, u, w * 0.07, w * 0.93, h * 0.09, h * 0.75)
-
-
-class Canvas:
-    """A frame being drawn. Shapes are anti-aliased by drawing them 3x larger on a mask."""
-
-    SS = 3
-
-    def __init__(self, base: Image.Image):
-        self.img = base
-
-    def _paste(self, color: tuple, x: int, y: int, mask: Image.Image, alpha: float) -> None:
-        if alpha < 0.999:
-            mask = mask.point(lambda v: int(v * alpha))
-        self.img.paste(color, (x, y), mask)
-
-    def text(self, xy: tuple[float, float], s: str, size: float, fill: tuple = TEXT, bold: bool = True,
-             anchor: str = "lt", alpha: float = 1.0) -> None:
-        """Draw text. anchor = horizontal (l, m, r) + vertical (t: top of the line, m: middle of the
-        capitals, b: baseline). Placement uses font metrics so every word on a line shares a baseline."""
-        if alpha <= 0.01 or not s:
-            return
-        f = font(int(size), bold)
-        asc, desc = f.getmetrics()
-        width = f.getlength(s)
-        pad = 3
-        mask = Image.new("L", (int(width) + 2 * pad + 6, asc + desc + 2 * pad), 0)
-        ImageDraw.Draw(mask).text((pad, pad), s, font=f, fill=255, anchor="la")
-        hx, vy = anchor[0], anchor[1]
-        x = xy[0] - (0 if hx == "l" else width / 2 if hx == "m" else width) - pad
-        base_in_mask = pad + asc
-        baseline = xy[1] + (0.36 * int(size) if vy == "m" else 0) if vy != "t" else xy[1] + asc
-        y = baseline - base_in_mask
-        self._paste(fill, int(round(x)), int(round(y)), mask, alpha)
-
-    def _shape(self, x0: float, y0: float, x1: float, y1: float, draw, fill: tuple, alpha: float) -> None:
-        if alpha <= 0.01:
-            return
-        ss, pad = self.SS, 3
-        ox, oy = int(math.floor(x0)) - pad, int(math.floor(y0)) - pad
-        w, h = int(math.ceil(x1)) - ox + pad, int(math.ceil(y1)) - oy + pad
-        if w < 1 or h < 1:
-            return
-        mask = Image.new("L", (w * ss, h * ss), 0)
-        draw(ImageDraw.Draw(mask), lambda x, y: ((x - ox) * ss, (y - oy) * ss), ss)
-        mask = mask.resize((w, h), Image.BOX)
-        self._paste(fill, ox, oy, mask, alpha)
-
-    def rrect(self, x0: float, y0: float, x1: float, y1: float, r: float, fill: tuple, alpha: float = 1.0) -> None:
-        if x1 - x0 < 1 or y1 - y0 < 1:
-            return
-        r = min(r, (x1 - x0) / 2, (y1 - y0) / 2)
-        self._shape(x0, y0, x1, y1, lambda d, m, ss: d.rounded_rectangle([*m(x0, y0), *m(x1, y1)], radius=r * ss, fill=255), fill, alpha)
-
-    def circle(self, cx: float, cy: float, r: float, fill: tuple, alpha: float = 1.0) -> None:
-        if r < 0.5:
-            return
-        self._shape(cx - r, cy - r, cx + r, cy + r, lambda d, m, ss: d.ellipse([*m(cx - r, cy - r), *m(cx + r, cy + r)], fill=255), fill, alpha)
-
-    def line(self, pts: list[tuple[float, float]], width: float, fill: tuple, alpha: float = 1.0) -> None:
-        if len(pts) < 2:
-            return
-        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
-        hw = width / 2 + 1
-
-        def draw(d, m, ss):
-            mp = [m(*p) for p in pts]
-            d.line(mp, fill=255, width=max(1, int(width * ss)), joint="curve")
-            for x, y in (mp[0], mp[-1]):  # round caps
-                d.ellipse([x - width * ss / 2, y - width * ss / 2, x + width * ss / 2, y + width * ss / 2], fill=255)
-
-        self._shape(min(xs) - hw, min(ys) - hw, max(xs) + hw, max(ys) + hw, draw, fill, alpha)
-
-    def polygon(self, pts: list[tuple[float, float]], fill: tuple, alpha: float = 1.0) -> None:
-        if len(pts) < 3:
-            return
-        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
-        self._shape(min(xs), min(ys), max(xs), max(ys), lambda d, m, ss: d.polygon([m(*p) for p in pts], fill=255), fill, alpha)
-
-
-@lru_cache(maxsize=8)
-def _glow_mask(diameter: int) -> Image.Image:
-    yy, xx = np.mgrid[0:diameter, 0:diameter].astype(np.float32)
-    d = np.hypot(xx - diameter / 2, yy - diameter / 2) / (diameter / 2)
-    return Image.fromarray((np.clip(1 - d, 0, 1) ** 2 * 255).astype(np.uint8), "L")
-
-
-def soft_glow(cv: "Canvas", cx: float, cy: float, radius: float, color: tuple, alpha: float) -> None:
-    d = max(8, int(radius * 2) // 8 * 8)  # bucketed so the cache stays small
-    cv._paste(color, int(cx - d / 2), int(cy - d / 2), _glow_mask(d), alpha)
-
-
-class Background:
-    """Navy gradient with two slow-moving soft glows. Built once per size."""
-
-    def __init__(self, w: int, h: int):
-        self.w, self.h = w, h
-        col = np.linspace(0, 1, h, dtype=np.float32)[:, None, None]
-        top, bot = np.array(BG_TOP, np.float32), np.array(BG_BOTTOM, np.float32)
-        arr = (top + (bot - top) * col) * np.ones((1, w, 1), np.float32)
-        self.base = Image.fromarray(arr.astype(np.uint8), "RGB")
-        size = int(min(w, h) * 1.1)
-        yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
-        d = np.hypot(xx - size / 2, yy - size / 2) / (size / 2)
-        self.glow = Image.fromarray((np.clip(1 - d, 0, 1) ** 2 * 70).astype(np.uint8), "L")
-        self.size = size
-
-    def frame(self, t: float) -> Image.Image:
-        img = self.base.copy()
-        for i, color in enumerate((VIOLET, CYAN)):
-            ang = t * 0.18 + i * math.pi
-            cx = self.w * (0.5 + 0.38 * math.cos(ang * 0.9 + i))
-            cy = self.h * (0.5 + 0.38 * math.sin(ang + i * 2))
-            img.paste(color, (int(cx - self.size / 2), int(cy - self.size / 2)), self.glow)
-        return img
-
+from .draw import (
+    ACCENT, BG_BOTTOM, BG_TOP, CARD, CYAN, FPS, GREEN, GRID, MUTED, TEXT, VIOLET,
+    Background, Canvas, Layout, clamp01, ease_back, ease_in_out, ease_out, fit_text, font, make_layout,
+    mix, seg, soft_glow, wrap,
+)
 
 # ---------------------------------------------------------------- shared pieces
 
@@ -523,14 +292,181 @@ def scene_points(cv: Canvas, lay: Layout, data: dict, t: float, dur: float) -> N
             ty += size * 1.25
 
 
+def scene_statement(cv: Canvas, lay: Layout, data: dict, t: float, dur: float) -> None:
+    text = data.get("text", "")
+    hl = {h.lower() for h in data.get("highlight", [])} or auto_highlight(text)
+    top = lay.y0
+    name = data.get("icon", "")
+    if name in icons.ICONS:
+        size = min(lay.width * 0.2, lay.height * 0.16)
+        icons.draw_icon(cv, name, lay.cx, lay.y0 + size * 1.15, size, seg(t, 0.0, 0.7), t)
+        top = lay.y0 + size * 2.5
+    pop_words(cv, lay, text, t, dur, top, lay.y1, int(100 * lay.u), hl)
+
+
+def scene_icon(cv: Canvas, lay: Layout, data: dict, t: float, dur: float) -> None:
+    """One big animated icon with rings pulsing out of it and a caption popping in below."""
+    u = lay.u
+    wide = lay.w > lay.h
+    size = min(lay.width * 0.3, lay.height * (0.19 if wide else 0.27))
+    cy = lay.y0 + lay.height * (0.3 if wide else 0.36)
+    soft_glow(cv, lay.cx, cy, size * 2.4, VIOLET, 0.35)
+    fade = ease_out(seg(t, 0.0, 0.5))
+    for i in range(3):
+        f = (t * 0.4 + i / 3) % 1.0
+        cv.ring(lay.cx, cy, size * (1.15 + f * 1.1), max(3, 5 * u), CYAN, (1 - f) * 0.45 * fade)
+    icons.draw_icon(cv, data.get("icon", "star"), lay.cx, cy, size, seg(t, 0.05, 0.8), t)
+    end = pop_words(cv, lay, data.get("label", ""), t - 0.4, dur, cy + size * (1.4 if wide else 1.5), lay.y1 - 120 * u, int(86 * u), auto_highlight(data.get("label", "")))
+    cap = data.get("caption", "")
+    if cap:
+        p = ease_out(seg(t, 1.4, 2.0))
+        csize, lines = fit_text(cap, False, lay.width, 2, int(40 * u), int(28 * u))
+        y = end + 14 * u + (1 - p) * 20 * u
+        for ln in lines:
+            cv.text((lay.cx, y), ln, csize, MUTED, False, "mt", p)
+            y += csize * 1.3
+
+
+def _pulse_along(cv: Canvas, a: tuple[float, float], b: tuple[float, float], t: float, color: tuple, u: float, alpha: float = 1.0) -> None:
+    f = (t * 0.7) % 1.0
+    cv.circle(a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, 9 * u, color, alpha)
+
+
+def scene_flow(cv: Canvas, lay: Layout, data: dict, t: float, dur: float) -> None:
+    """Steps connected by lines, with pulses of light travelling from step to step."""
+    u = lay.u
+    top = heading(cv, lay, data.get("title", ""), t)
+    steps = data["steps"]
+    n = len(steps)
+    portrait = lay.h > lay.w
+    nodes = []
+    row = 0.0
+    if portrait:
+        row = min(280 * u, (lay.y1 - top) / n)
+        top += max(0.0, (lay.y1 - top - row * n) / 2)
+        nodes = [(lay.x0 + 125 * u, top + row * (i + 0.5)) for i in range(n)]
+    else:
+        col = lay.width / n
+        nodes = [(lay.x0 + col * (i + 0.5), top + (lay.y1 - top) * 0.36) for i in range(n)]
+    r = min((112 if portrait else 120) * u, (row * 0.4) if portrait else 120 * u)
+    for i in range(n - 1):  # connectors first, so the nodes sit on top of them
+        a, b = nodes[i], nodes[i + 1]
+        g = ease_out(seg(t, 0.5 + i * 0.5, 1.1 + i * 0.5))
+        if g > 0:
+            end = (a[0] + (b[0] - a[0]) * g, a[1] + (b[1] - a[1]) * g)
+            cv.line([a, end], max(4, 7 * u), GRID)
+            if g >= 1:
+                _pulse_along(cv, a, b, t - i * 0.25, ACCENT, u)
+    for i, st in enumerate(steps):
+        p = seg(t, 0.35 + i * 0.5, 0.95 + i * 0.5)
+        x, y = nodes[i]
+        k = ease_back(p)
+        cv.circle(x, y, r * k, CARD)
+        cv.ring(x, y, r * k, max(3, 5 * u), ACCENT if i == n - 1 else CYAN, clamp01(p * 2))
+        icons.draw_icon(cv, st["icon"], x, y, r * 0.62, p, t - i * 0.3)
+        size, lines = fit_text(st["label"], True, (lay.x1 - x - r - 40 * u) if portrait else lay.width / n - 20 * u, 3, int(54 * u), int(30 * u))
+        if portrait:
+            ty = y - len(lines) * size * 1.2 / 2
+            for ln in lines:
+                cv.text((x + r + 36 * u + (1 - ease_out(p)) * 40 * u, ty), ln, size, TEXT, True, "lt", ease_out(p))
+                ty += size * 1.2
+        else:
+            ty = y + r + 24 * u
+            for ln in lines:
+                cv.text((x, ty), ln, size, TEXT, True, "mt", ease_out(p))
+                ty += size * 1.2
+
+
+def scene_compare(cv: Canvas, lay: Layout, data: dict, t: float, dur: float) -> None:
+    """Two sides head to head, with a pulsing VS badge between them."""
+    u = lay.u
+    top = heading(cv, lay, data.get("title", ""), t) if data.get("title") else lay.y0
+    portrait = lay.h > lay.w
+    gap = 70 * u
+    if portrait:
+        ch = (lay.y1 - top - gap) / 2
+        boxes = [(lay.x0, top, lay.x1, top + ch), (lay.x0, top + ch + gap, lay.x1, top + 2 * ch + gap)]
+    else:
+        cw = (lay.width - gap) / 2
+        boxes = [(lay.x0, top, lay.x0 + cw, lay.y1), (lay.x0 + cw + gap, top, lay.x1, lay.y1)]
+    for i, side in enumerate((data["left"], data["right"])):
+        p = seg(t, 0.3 + i * 0.45, 0.95 + i * 0.45)
+        x0, y0, x1, y1 = boxes[i]
+        off = (1 - ease_out(p)) * (-1 if i == 0 else 1) * 90 * u * (0 if portrait else 1)
+        offy = (1 - ease_out(p)) * (-1 if i == 0 else 1) * 90 * u * (1 if portrait else 0)
+        x0, x1, y0, y1 = x0 + off, x1 + off, y0 + offy, y1 + offy
+        col = CYAN if i == 0 else ACCENT
+        cv.rrect(x0, y0, x1, y1, 30 * u, CARD, ease_out(p))
+        cv.rrect(x0, y0, x0 + 12 * u, y1, 6 * u, col, ease_out(p)) if portrait else cv.rrect(x0, y0, x1, y0 + 12 * u, 6 * u, col, ease_out(p))
+        isz = min(100 * u, (y1 - y0) * 0.3)
+        icons.draw_icon(cv, side["icon"], x0 + 60 * u + isz, (y0 + y1) / 2 if portrait and not side["points"] else y0 + 40 * u + isz, isz * 0.9, p, t)
+        tx = x0 + 60 * u + isz * 2 + 20 * u if portrait else x0 + 40 * u
+        ty = y0 + 40 * u if portrait else y0 + 60 * u + isz * 2
+        cv.text((tx, ty), side["label"], 60 * u, col, True, "lt", ease_out(p))
+        ty += 90 * u
+        for pt in side["points"]:
+            size, lines = fit_text(pt, False, x1 - tx - 40 * u, 2, int(42 * u), int(26 * u))
+            cv.text((tx, ty), "•", size, col, True, "lt", ease_out(p))
+            for ln in lines:
+                cv.text((tx + 34 * u, ty), ln, size, TEXT, False, "lt", ease_out(p))
+                ty += size * 1.25
+            ty += 14 * u
+    vp = ease_back(seg(t, 1.0, 1.5))
+    vx, vy = (lay.cx, boxes[0][3] + gap / 2) if portrait else (boxes[0][2] + gap / 2, (top + lay.y1) / 2)
+    pulse = 1 + 0.07 * math.sin(t * 5)
+    cv.circle(vx, vy, 56 * u * vp * pulse, ACCENT)
+    cv.text((vx, vy), "VS", 44 * u * vp, (30, 24, 8), True, "mm", clamp01(vp))
+
+
+def scene_orbit(cv: Canvas, lay: Layout, data: dict, t: float, dur: float) -> None:
+    """A central idea with related ideas orbiting around it on lines of light."""
+    u = lay.u
+    cx, cy = lay.cx, (lay.y0 + lay.y1) / 2
+    items = data["items"]
+    n = len(items)
+    rx, ry = lay.width * 0.36, min(lay.height * 0.38, lay.width * 0.52)
+    cp = seg(t, 0.0, 0.7)
+    soft_glow(cv, cx, cy, 340 * u, VIOLET, 0.35 * ease_out(cp))
+    positions = []
+    for i in range(n):
+        a = -math.pi / 2 + i / n * math.tau + t * 0.28
+        positions.append((cx + math.cos(a) * rx, cy + math.sin(a) * ry))
+    for i, (x, y) in enumerate(positions):
+        g = ease_out(seg(t, 0.5 + i * 0.25, 1.1 + i * 0.25))
+        cv.line([(cx, cy), (cx + (x - cx) * g, cy + (y - cy) * g)], max(3, 5 * u), GRID, 0.9)
+        if g >= 1:
+            _pulse_along(cv, (cx, cy), (x, y), t + i * 0.37, (CYAN, ACCENT, VIOLET, GREEN)[i % 4], u, 0.9)
+    r = 150 * u
+    cv.circle(cx, cy, r * ease_back(cp), CARD)
+    cv.ring(cx, cy, r * ease_back(cp), max(4, 6 * u), ACCENT, cp)
+    icons.draw_icon(cv, data["icon"], cx, cy, r * 0.6, cp, t)
+    for i, (x, y) in enumerate(positions):
+        p = seg(t, 0.55 + i * 0.25, 1.1 + i * 0.25)
+        size = int(46 * u)
+        wd = font(size, True).getlength(items[i]) + 56 * u
+        x = min(max(x, lay.x0 + wd / 2), lay.x1 - wd / 2)
+        k = ease_back(p)
+        col = (CYAN, ACCENT, VIOLET, GREEN)[i % 4]
+        cv.rrect(x - wd / 2 * k, y - 42 * u * k, x + wd / 2 * k, y + 42 * u * k, 42 * u * k, col, clamp01(p * 2))
+        cv.text((x, y), items[i], size * k, (24, 22, 52), True, "mm", clamp01(p * 2))
+    lw = font(int(56 * u), True).getlength(data["label"])  # the centre label goes on top, so a passing chip never hides it
+    ly = cy + r + 30 * u
+    cv.rrect(cx - lw / 2 - 22 * u, ly - 8 * u, cx + lw / 2 + 22 * u, ly + 74 * u, 30 * u, BG_BOTTOM, 0.9 * ease_out(cp))
+    cv.text((cx, ly), data["label"], 56 * u, TEXT, True, "mt", ease_out(cp))
+
+
 SCENES = {
     "title": scene_title,
     "statement": scene_statement,
+    "icon": scene_icon,
     "big_number": scene_big_number,
     "bars": scene_bars,
     "line": scene_line,
     "timeline": scene_timeline,
     "points": scene_points,
+    "flow": scene_flow,
+    "compare": scene_compare,
+    "orbit": scene_orbit,
 }
 
 
@@ -550,8 +486,21 @@ def render_frame(kind: str, data: dict, t: float, dur: float, t0: float, w: int,
     lay = make_layout(w, h)
     layer = bg.copy()
     SCENES.get(kind, scene_statement)(Canvas(layer), lay, data, t, dur)
+    zoom = 1.0 + 0.05 * clamp01(t / max(dur, 0.1))  # slow push-in keeps every scene alive
+    if zoom > 1.001:
+        cw, ch = w / zoom, h / zoom
+        left, top = (w - cw) / 2, (h - ch) / 2
+        layer = layer.resize((w, h), Image.BILINEAR, box=(left, top, left + cw, top + ch))
     fade = min(1.0, t / 0.18, max(0.0, (dur - t) / 0.18))  # quick fade at both ends
-    return layer if fade >= 0.999 else Image.blend(bg, layer, max(0.0, fade))
+    out = layer if fade >= 0.999 else Image.blend(bg, layer, max(0.0, fade))
+    if t0 > 0.01 and t < 0.55:  # a swipe of colour carries the eye from the previous scene
+        p = ease_in_out(t / 0.55)
+        skew = h * 0.22
+        for i, (col, width) in enumerate(((ACCENT, 0.34), (CYAN, 0.16))):
+            x = -width * w - skew + (w + width * w + skew * 2 + w * 0.3) * clamp01(p - i * 0.08)
+            bw = width * w
+            Canvas(out).polygon([(x, 0), (x + bw, 0), (x + bw - skew, h), (x - skew, h)], col, 0.92 * (1 - 0.5 * p))
+    return out
 
 
 def render_frames(kind: str, data: dict, dur: float, t0: float, w: int, h: int) -> Iterator[bytes]:

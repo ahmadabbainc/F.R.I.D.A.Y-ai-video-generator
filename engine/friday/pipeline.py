@@ -55,7 +55,7 @@ def _explainer(title, topic, seconds, aspect, out, work, settings, step, warning
         step(20 + int(60 * i / total), f"Animating scene {i + 1} of {total}")
         audio_path, speech, spoken = voice.synthesize(beat.narration, work / f"voice_{i}", settings, rate)
         silent += 0 if spoken else 1
-        frames = max(1, math.ceil((speech + 0.45) * scenes.FPS))
+        frames = max(1, math.ceil(max(speech + 0.45, 3.4) * scenes.FPS))  # never shorter than the animation needs
         duration = frames / scenes.FPS  # whole frames, so picture and sound stay in step
         seg = work / f"seg_{i}.mp4"
         try:
@@ -137,6 +137,7 @@ def generate(req: Request, out: Path, settings: Settings, progress: Progress | N
                 found = footage.fetch_clip(
                     query, aspect, work / f"clip_{i}.mp4", settings, used,
                     search=scene.search if (scene.real and n == 0) else "", real=scene.real and n == 0, open_libs=use_open,
+                    min_seconds=duration,
                 )
                 if found:
                     break
