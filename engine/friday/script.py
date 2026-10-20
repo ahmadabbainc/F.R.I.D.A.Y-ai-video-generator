@@ -60,29 +60,54 @@ def _models(settings: Settings) -> list[str]:
 
 
 def chat(settings: Settings, system: str, user: str) -> str:
-    """One chat completion with retries across models. Returns the reply text; raises if all fail."""
-    resp = None
+    """One chat completion. Tries the configured model, then fallbacks, going round a few times.
+
+    Timeouts, dropped connections, busy servers (5xx), quota (429) and retired models (404) all
+    move on to the next model. Raises only if every attempt failed or the time budget ran out.
+    """
+    deadline = time.monotonic() + 270
+    google = "googleapis.com" in settings.llm_base_url
+    resp, error = None, None
     for attempt in range(3):  # busy servers clear quickly, so go round the models a few times
         for model in _models(settings):
-            resp = requests.post(
-                f"{settings.llm_base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-                json={
-                    "model": model,
-                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                    "temperature": 0.8,
-                },
-                timeout=90,
-            )
-            if resp.status_code not in RETRY_STATUS:
+            if time.monotonic() > deadline:
                 break
-        else:
-            if attempt < 2:
-                time.sleep(4 * (attempt + 1))
-            continue
-        break
+            payload = {
+                "model": model,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                "temperature": 0.8,
+            }
+            if google:
+                payload["reasoning_effort"] = "low"  # Gemini "thinking" can take minutes; a script needs little
+            for _ in range(2):
+                try:
+                    resp = requests.post(
+                        f"{settings.llm_base_url}/chat/completions",
+                        headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+                        json=payload,
+                        timeout=(10, 75),
+                    )
+                    error = None
+                except requests.RequestException as exc:  # timeout, connection reset
+                    resp, error = None, exc
+                    break
+                if resp.status_code == 400 and "reasoning_effort" in payload:
+                    del payload["reasoning_effort"]  # this model does not accept the option: ask again without it
+                    continue
+                break
+            if resp is not None and resp.status_code not in RETRY_STATUS:
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"]["content"]
+        if time.monotonic() > deadline:
+            break
+        if attempt < 2:
+            time.sleep(4 * (attempt + 1))
+    if error is not None:
+        raise error
+    if resp is None:
+        raise TimeoutError("script writer did not answer in time")
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    raise RuntimeError(f"script writer answered {resp.status_code}")
 
 
 def _llm_script(title: str, topic: str, seconds: int, settings: Settings, style_hint: str) -> list[Scene]:

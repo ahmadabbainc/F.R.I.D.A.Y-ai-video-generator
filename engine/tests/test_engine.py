@@ -217,3 +217,59 @@ class VoiceFallbackTests(unittest.TestCase):
             with mock.patch.object(voice, "_espeak", fake_espeak):
                 _, _, spoken = voice.synthesize("Hello there friend", Path(tmp) / "w", s)
                 self.assertTrue(spoken)
+
+
+class LlmTimeoutTests(unittest.TestCase):
+    def setUp(self):
+        import dataclasses
+        from friday import config
+        self.s = dataclasses.replace(config.Settings(), llm_api_key="k")
+
+    def reply(self, code, body=None):
+        class R:
+            status_code = code
+            def raise_for_status(self_inner):
+                if code >= 400:
+                    raise RuntimeError(code)
+            def json(self_inner):
+                return body
+        return R()
+
+    GOOD = {"choices": [{"message": {"content": '{"scenes":[{"narration":"Hi.","keywords":"cat"}]}'}}]}
+
+    def test_a_timeout_moves_on_to_the_next_model(self):
+        import requests
+        from unittest import mock
+        from friday import script
+        seq = iter([requests.ReadTimeout("slow"), requests.ConnectionError("reset"), self.reply(200, self.GOOD)])
+
+        def fake(*a, **k):
+            r = next(seq)
+            if isinstance(r, Exception):
+                raise r
+            return r
+        with mock.patch.object(script.requests, "post", fake), mock.patch.object(script.time, "sleep"):
+            self.assertEqual(script._llm_script("T", "t", 30, self.s, "")[0].keywords, "cat")
+
+    def test_everything_timing_out_raises_the_timeout(self):
+        import requests
+        from unittest import mock
+        from friday import script
+
+        def fake(*a, **k):
+            raise requests.ReadTimeout("slow")
+        with mock.patch.object(script.requests, "post", fake), mock.patch.object(script.time, "sleep"):
+            with self.assertRaises(requests.ReadTimeout):
+                script.chat(self.s, "s", "u")
+
+    def test_model_that_rejects_reasoning_effort_is_asked_again_without_it(self):
+        from unittest import mock
+        from friday import script
+        sent = []
+
+        def fake(url, json=None, **k):
+            sent.append("reasoning_effort" in json)
+            return self.reply(400) if json.get("reasoning_effort") else self.reply(200, self.GOOD)
+        with mock.patch.object(script.requests, "post", fake):
+            script.chat(self.s, "s", "u")
+        self.assertEqual(sent, [True, False])
