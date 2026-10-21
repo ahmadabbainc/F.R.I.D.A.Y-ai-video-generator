@@ -80,6 +80,29 @@ def encode_frames(frames: Iterable[bytes], w: int, h: int, out: Path) -> None:
             raise RenderError(f"ffmpeg failed: {tail}")
 
 
+def encode_jpegs(frames: Iterable[bytes], out: Path) -> None:
+    """Pipe JPEG frames (from the browser renderer) into ffmpeg as one segment."""
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "image2pipe", "-framerate", "30", "-c:v", "mjpeg", "-i", "-",
+           "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", *COMMON_OUT, str(out)]
+    with tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=err)
+        try:
+            for frame in frames:
+                proc.stdin.write(frame)
+        except BrokenPipeError:
+            pass
+        finally:
+            try:
+                proc.stdin.close()
+            except BrokenPipeError:
+                pass
+            code = proc.wait()
+        if code != 0:
+            err.seek(0)
+            tail = "\n".join(err.read().decode(errors="replace").strip().splitlines()[-6:])
+            raise RenderError(f"ffmpeg failed: {tail}")
+
+
 def build_scene_audio(voice: Path, duration: float, out: Path) -> None:
     """Pad or trim narration to exactly `duration` so audio and video stay in sync."""
     run(

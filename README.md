@@ -42,6 +42,7 @@ Pick the type before you press Generate:
 
 - **Footage**: real video clips matched to each line (stock and openly licensed libraries, below).
 - **Animated**: motion graphics drawn entirely by code, with no stock footage, so the pictures always match the voice. The AI writes a storyboard and Friday animates it: a rocket that flies, coins that drop, gears that turn, a spinning globe, a beating heart and other animated icons; flow diagrams with pulses of light travelling between steps; side-by-side comparisons; concept maps with ideas orbiting a centre; kinetic text; counting numbers; bar and line charts; timelines. There are drifting particles, a slow camera push-in and colour-swipe transitions. Scenes are never shorter than about three and a half seconds, so every animation finishes.
+- **Motion**: bold kinetic typography on colour fields, sticker-style burst words, counting numbers, check lists, animated tile patterns, a glowing 3D particle ring, a turning 3D shape, a phone showing app cards, an animated route map and an isometric 3D city that grows while the camera orbits. Drawn in a headless Chromium (on GitHub Actions the runner's Chrome is used) with bundled open fonts (Inter, Lora; SIL OFL), wipe transitions between scenes, captions burned in. It aims at the look of code-made promo and explainer motion graphics, not at hand-built per-video animation.
 
 The AI writes any numbers, dates or statistics in animated videos, and Friday adds a note to check them before you publish. Without a script key, animated videos use simple text scenes only.
 

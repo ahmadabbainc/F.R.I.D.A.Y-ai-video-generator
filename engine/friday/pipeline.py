@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import captions, explainer, footage, inspire, render, scenes, script, voice
+from . import captions, explainer, footage, inspire, motion, render, scenes, script, voice
 from .config import Settings
 
 Progress = Callable[[int, str], None]
@@ -21,7 +21,7 @@ class Request:
     aspect: str = "9:16"  # "9:16" or "16:9"
     seconds: int = 45
     style_url: str = ""
-    kind: str = "footage"  # "footage" (stock clips) or "explainer" (animated, drawn by code)
+    kind: str = "footage"  # "footage", "explainer" (animated) or "motion"
 
 
 @dataclass
@@ -81,6 +81,41 @@ def _explainer(title, topic, seconds, aspect, out, work, settings, step, warning
     return Result(out, cursor, total, warnings)
 
 
+def _motion(title, topic, seconds, aspect, out, work, settings, step, warnings, style_hint, rate) -> Result:
+    """Motion video: voice first, then one browser-drawn timeline that matches it exactly."""
+    step(10, "Writing the storyboard")
+    beats, warns = motion.make_storyboard(title, topic, seconds, settings, style_hint)
+    warnings += warns
+    w, h = render.dimensions(aspect, settings.render_scale)
+    audios, timed, silent, cursor, total = [], [], 0, 0.0, len(beats)
+    for i, beat in enumerate(beats):
+        step(15 + int(35 * i / total), f"Recording voice {i + 1} of {total}")
+        audio_path, speech, spoken = voice.synthesize(beat.narration, work / f"voice_{i}", settings, rate)
+        silent += 0 if spoken else 1
+        beat.dur = math.ceil(max(speech + 0.45, 3.2) * scenes.FPS) / scenes.FPS
+        padded = work / f"audio_{i}.wav"
+        render.build_scene_audio(audio_path, beat.dur, padded)
+        audios.append(padded)
+        timed.append(captions.Timed(cursor, speech, beat.narration))
+        cursor += beat.dur
+    if silent == total:
+        warnings.append("Voice service unreachable, so this video is silent. Captions are still burned in.")
+    elif silent:
+        warnings.append(f"{silent} of {total} scenes had no voice because the voice service failed. Try again.")
+    step(55, "Animating the motion scenes")
+    seg = work / "motion.mp4"
+    try:
+        render.encode_jpegs(motion.frames(beats, w, h), seg)
+    except (motion.MotionError, render.RenderError) as exc:
+        raise RuntimeError(f"Motion renderer failed: {exc}") from exc
+    step(85, "Adding captions and rendering")
+    (work / "captions.ass").write_text(captions.build_ass(timed, w, h, settings.caption_font), encoding="utf-8")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    render.assemble([seg], [work / f"audio_{i}.wav" for i in range(total)], "captions.ass", out, work)
+    step(100, "Done")
+    return Result(out, cursor, total, warnings)
+
+
 def generate(req: Request, out: Path, settings: Settings, progress: Progress | None = None) -> Result:
     def step(pct: int, label: str) -> None:
         if progress:
@@ -106,6 +141,8 @@ def generate(req: Request, out: Path, settings: Settings, progress: Progress | N
             if profile:
                 style_hint, rate = profile.hint(), profile.voice_rate_percent
 
+        if req.kind == "motion":
+            return _motion(title, topic, seconds, aspect, out, work, settings, step, warnings, style_hint, rate)
         if req.kind == "explainer":
             return _explainer(title, topic, seconds, aspect, out, work, settings, step, warnings, style_hint, rate)
 

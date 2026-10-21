@@ -250,9 +250,10 @@
   form.addEventListener("change", (e) => {
     if (e.target.name === "aspect") layout.dataset.aspect = e.target.value;
     if (e.target.name === "kind") {
-      $("kind-hint").textContent = e.target.value === "explainer"
-        ? "Animated charts, numbers and text drawn by code. No stock clips."
-        : "Real video clips matched to every line.";
+      $("kind-hint").textContent = {
+        explainer: "Animated charts, numbers and text drawn by code. No stock clips.",
+        motion: "Bold kinetic type, 3D shapes and app scenes, drawn by code. No stock clips.",
+      }[e.target.value] || "Real video clips matched to every line.";
     }
   });
 

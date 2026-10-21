@@ -17,7 +17,7 @@ def main() -> None:
     r = sub.add_parser("render", help="make one video")
     r.add_argument("--title", required=True)
     r.add_argument("--topic", default="")
-    r.add_argument("--kind", default="footage", choices=["footage", "explainer"])
+    r.add_argument("--kind", default="footage", choices=["footage", "explainer", "motion"])
     r.add_argument("--aspect", default="9:16", choices=["9:16", "16:9"])
     r.add_argument("--seconds", type=int, default=45)
     r.add_argument("--style-url", default="")

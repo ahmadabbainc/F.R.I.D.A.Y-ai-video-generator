@@ -31,7 +31,7 @@ on:
         type: string
         default: ""
       kind:
-        description: "footage or explainer"
+        description: "footage, explainer or motion"
         required: false
         type: string
         default: "footage"
@@ -65,6 +65,10 @@ jobs:
 
       - name: Installing Friday packages
         run: pip install -r engine/requirements.txt
+
+      - name: Browser for Motion videos
+        if: ${{ inputs.kind == 'motion' }}
+        run: which google-chrome chromium chromium-browser || python -m playwright install --with-deps chromium
 
       - name: Writing, voicing and rendering
         working-directory: engine

@@ -65,7 +65,7 @@ def _run(job: Job, body: NewJob) -> None:
     job.status = "running"
     try:
         result = generate(
-            Request(body.title, body.topic, body.aspect, body.seconds, body.style_url, body.kind if body.kind in ("footage", "explainer") else "footage"),
+            Request(body.title, body.topic, body.aspect, body.seconds, body.style_url, body.kind if body.kind in ("footage", "explainer", "motion") else "footage"),
             _video_path(job.id),
             settings,
             progress,
