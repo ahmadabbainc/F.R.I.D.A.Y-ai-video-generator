@@ -151,7 +151,7 @@
       const wanted = `Friday ${h.id}`;
       const run = runs.workflow_runs.find((r) => r.display_title === wanted || r.name === wanted);
       if (!run) {
-        if (Date.now() - h.startedAt > 120000) {
+        if (Date.now() - h.startedAt > 420000) {
           throw failure("GitHub didn't start the render. Check that Actions is enabled and the Render workflow is on the default branch.");
         }
         return { state: "running", progress: 4, label: "Sending to GitHub" };
