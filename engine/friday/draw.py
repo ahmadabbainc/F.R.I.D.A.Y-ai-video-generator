@@ -127,8 +127,8 @@ def make_layout(w: int, h: int) -> Layout:
     portrait = h > w
     u = min(w, h) / 1080
     if portrait:
-        return Layout(w, h, u, w * 0.08, w * 0.92, h * 0.095, h * 0.645)
-    return Layout(w, h, u, w * 0.07, w * 0.93, h * 0.09, h * 0.75)
+        return Layout(w, h, u, w * 0.08, w * 0.92, h * 0.09, h * 0.9)
+    return Layout(w, h, u, w * 0.07, w * 0.93, h * 0.09, h * 0.9)
 
 
 class Canvas:

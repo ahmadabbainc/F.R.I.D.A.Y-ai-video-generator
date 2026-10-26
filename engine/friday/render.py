@@ -116,7 +116,7 @@ def _concat_list(paths: list[Path], dest: Path) -> None:
     dest.write_text("".join(f"file '{p.resolve()}'\n" for p in paths))
 
 
-def assemble(segments: list[Path], audios: list[Path], ass_name: str, out: Path, workdir: Path) -> None:
+def assemble(segments: list[Path], audios: list[Path], ass_name: str | None, out: Path, workdir: Path) -> None:
     vlist, alist = workdir / "video.txt", workdir / "audio.txt"
     _concat_list(segments, vlist)
     _concat_list(audios, alist)
@@ -124,7 +124,7 @@ def assemble(segments: list[Path], audios: list[Path], ass_name: str, out: Path,
         ["ffmpeg", "-y", "-loglevel", "error",
          "-f", "concat", "-safe", "0", "-i", str(vlist),
          "-f", "concat", "-safe", "0", "-i", str(alist),
-         "-vf", f"ass={ass_name}",
+         *(["-vf", f"ass={ass_name}"] if ass_name else []),
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
          "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", str(out)],
         cwd=workdir,  # relative ass path avoids filter-string escaping

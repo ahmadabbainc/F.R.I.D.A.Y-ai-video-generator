@@ -363,10 +363,21 @@ const SCENES = { kinetic: sceneKinetic, burst: sceneBurst, number: sceneNumber, 
 
 /* ---------- timeline and transitions ---------- */
 function themeFor(b) { return THEMES[((b.theme || 0) % THEMES.length + THEMES.length) % THEMES.length]; }
+let strict = false;
 function drawBeat(b, local) {
-  const fn = SCENES[b.type] || sceneKinetic;
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
-  try { fn(Math.max(0, local), b.dur, b.data || {}, themeFor(b)); } catch (e) { bg(themeFor(b)); }
+  let done = false;
+  if (b.fn && !b.bad) {
+    const th = themeFor(b);
+    ctx.save(); ctx.scale(U, U);
+    try { b.fn(makeApi(th), Math.max(0, local), b.dur); done = true; }
+    catch (e) { b.err = String(e); b.bad = true; if (strict) { ctx.restore(); ctx.restore(); throw e; } }
+    ctx.restore();
+  }
+  if (!done) {
+    const fn = SCENES[b.type] || sceneKinetic;
+    try { TH = themeFor(b); fn(Math.max(0, local), b.dur, b.data || {}, themeFor(b)); } catch (e) { bg(themeFor(b)); }
+  }
   ctx.restore();
 }
 const WIPE = 0.5;
@@ -380,9 +391,9 @@ function wipeClip(kind, p) {
   ctx.clip();
 }
 window.setup = function (s, width, height) {
-  story = s; W = width; H = height; U = Math.min(W, H) / 1080; ZONE = H > W ? 0.66 : 0.78;
+  story = s; W = width; H = height; U = Math.min(W, H) / 1080; ZONE = 0.92;
   cvs = document.getElementById("c"); cvs.width = W; cvs.height = H; ctx = cvs.getContext("2d");
-  let at = 0; story.beats.forEach((b) => { b.start = at; at += b.dur; });
+  let at = 0; story.beats.forEach((b) => { b.start = at; at += b.dur; b.fn = b.code ? window.compileScene(b.code) : null; if (b.code && !b.fn) b.bad = true; });
 };
 window.renderAt = function (t) {
   const beats = story.beats; let i = beats.findIndex((b) => t < b.start + b.dur); if (i < 0) i = beats.length - 1;
@@ -397,3 +408,29 @@ window.loadFonts = async function (base) {
   for (const [name, file] of defs) { const f = new FontFace(name, `url(${base}/${file})`); await f.load(); document.fonts.add(f); }
   return true;
 };
+
+/* Dry-run every AI-written scene: it must run without errors, show something, move, and be fast enough. */
+window.checkBeats = function () {
+  const probe = document.createElement("canvas"); probe.width = 54; probe.height = Math.round(54 * H / W); const pc = probe.getContext("2d", { willReadFrequently: true });
+  const out = []; strict = true;
+  story.beats.forEach((b, i) => {
+    if (!b.code) { out.push(null); return; }
+    if (!b.fn) { out.push({ ok: false, err: "rejected by the safety filter" }); return; }
+    try {
+      const frames = [], t0 = performance.now();
+      [0.3, 0.6, 0.95].forEach((f) => {
+        ctx.clearRect(0, 0, W, H); drawBeat(b, b.dur * f);
+        pc.drawImage(cvs, 0, 0, probe.width, probe.height); frames.push(pc.getImageData(0, 0, probe.width, probe.height).data);
+      });
+      const ms = (performance.now() - t0) / 3, n = frames[0].length / 4; let mean = 0, diff = 0;
+      for (let k = 0; k < n; k++) mean += frames[1][k * 4] * 0.3 + frames[1][k * 4 + 1] * 0.6 + frames[1][k * 4 + 2] * 0.1;
+      mean /= n; let v = 0;
+      for (let k = 0; k < n; k++) { const l = frames[1][k * 4] * 0.3 + frames[1][k * 4 + 1] * 0.6 + frames[1][k * 4 + 2] * 0.1; v += (l - mean) * (l - mean); }
+      for (let k = 0; k < n * 4; k++) diff += Math.abs(frames[0][k] - frames[2][k]); diff /= n * 4;
+      const ink = Math.sqrt(v / n), bad = ink < 6 ? "scene is blank" : diff < 0.6 ? "scene does not move" : ms > 200 ? "scene is too slow" : b.bad ? b.err : null;
+      out.push({ ok: !bad, err: bad || "", ink, diff, ms });
+    } catch (e) { out.push({ ok: false, err: String(e).slice(0, 160) }); }
+  });
+  strict = false; return out;
+};
+window.disableBeat = function (i) { story.beats[i].bad = true; story.beats[i].fn = null; };

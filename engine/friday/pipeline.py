@@ -70,13 +70,12 @@ def _explainer(title, topic, seconds, aspect, out, work, settings, step, warning
         timed.append(captions.Timed(cursor, speech, beat.narration))
         cursor += duration
     if silent == total:
-        warnings.append("Voice service unreachable, so this video is silent. Captions are still burned in.")
+        warnings.append("Voice service unreachable, so this video is silent.")
     elif silent:
         warnings.append(f"{silent} of {total} scenes had no voice because the voice service failed. Try again.")
-    step(85, "Adding captions and rendering")
-    (work / "captions.ass").write_text(captions.build_ass(timed, w, h, settings.caption_font), encoding="utf-8")
+    step(85, "Rendering")
     out.parent.mkdir(parents=True, exist_ok=True)
-    render.assemble(segments, audios, "captions.ass", out, work)
+    render.assemble(segments, audios, None, out, work)  # animated scenes carry their own words: no captions
     step(100, "Done")
     return Result(out, cursor, total, warnings)
 
@@ -99,19 +98,42 @@ def _motion(title, topic, seconds, aspect, out, work, settings, step, warnings, 
         timed.append(captions.Timed(cursor, speech, beat.narration))
         cursor += beat.dur
     if silent == total:
-        warnings.append("Voice service unreachable, so this video is silent. Captions are still burned in.")
+        warnings.append("Voice service unreachable, so this video is silent.")
     elif silent:
         warnings.append(f"{silent} of {total} scenes had no voice because the voice service failed. Try again.")
-    step(55, "Animating the motion scenes")
+    if settings.live_script:
+        step(50, "Designing custom animation for each scene")
+        try:
+            if motion.add_code(beats, aspect, settings):
+                problems = motion.check_code(beats, w, h)
+                if problems:
+                    motion.repair_code(beats, {i: p for i, p in problems.items()}, aspect, settings)
+        except motion.MotionError:
+            for b in beats:
+                b.code = ""
+    step(62, "Animating the motion scenes")
     seg = work / "motion.mp4"
+    report: list[str] = []
     try:
-        render.encode_jpegs(motion.frames(beats, w, h), seg)
+        render.encode_jpegs(motion.frames(beats, w, h, report=report), seg)
     except (motion.MotionError, render.RenderError) as exc:
-        raise RuntimeError(f"Motion renderer failed: {exc}") from exc
-    step(85, "Adding captions and rendering")
-    (work / "captions.ass").write_text(captions.build_ass(timed, w, h, settings.caption_font), encoding="utf-8")
+        if not any(b.code for b in beats):
+            raise RuntimeError(f"Motion renderer failed: {exc}") from exc
+        for b in beats:  # custom code must never sink the video: render again with the built-in scenes
+            b.code = ""
+        report = []
+        warnings.append("Custom animation caused a problem, so built-in scenes were used.")
+        try:
+            render.encode_jpegs(motion.frames(beats, w, h, report=report), seg)
+        except (motion.MotionError, render.RenderError) as exc2:
+            raise RuntimeError(f"Motion renderer failed: {exc2}") from exc2
+    coded = next((r.split() for r in report if r.startswith("__coded")), None)
+    if coded and int(coded[1]):
+        ok = int(coded[1]) - int(coded[2])
+        warnings.append(f"Custom AI animation on {ok} of {total} scenes; the others use built-in looks.")
+    step(85, "Rendering")
     out.parent.mkdir(parents=True, exist_ok=True)
-    render.assemble([seg], [work / f"audio_{i}.wav" for i in range(total)], "captions.ass", out, work)
+    render.assemble([seg], [work / f"audio_{i}.wav" for i in range(total)], None, out, work)
     step(100, "Done")
     return Result(out, cursor, total, warnings)
 
@@ -199,7 +221,7 @@ def generate(req: Request, out: Path, settings: Settings, progress: Progress | N
             cursor += duration
 
         if silent_scenes == total:
-            warnings.append("Voice service unreachable, so this video is silent. Captions are still burned in.")
+            warnings.append("Voice service unreachable, so this video is silent.")
         elif silent_scenes:
             warnings.append(f"{silent_scenes} of {total} scenes had no voice because the voice service failed. Try again.")
         if not settings.live_footage and not credits:
