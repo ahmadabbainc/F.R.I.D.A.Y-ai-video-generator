@@ -48,6 +48,8 @@ def _explainer(title, topic, seconds, aspect, out, work, settings, step, warning
     step(10, "Writing the storyboard")
     beats, warns = explainer.make_storyboard(title, topic, seconds, settings, style_hint)
     warnings += warns
+    if beats[-1].type != "title":  # end on a closing title card instead of just stopping
+        beats.append(explainer.Beat(f"That is {title}, explained.", "title", {"title": motion._short(title, 60), "subtitle": ""}))
     w, h = render.dimensions(aspect, settings.render_scale)
     segments, audios, timed = [], [], []
     silent, cursor, total = 0, 0.0, len(beats)
@@ -61,7 +63,7 @@ def _explainer(title, topic, seconds, aspect, out, work, settings, step, warning
         try:
             render.encode_frames(scenes.render_frames(beat.type, beat.data, duration, cursor, w, h), w, h, seg)
         except Exception:  # one bad scene must not sink the video: show its words plainly instead
-            fallback = {"text": beat.narration[:130], "highlight": []}
+            fallback = {"text": motion.headline(beat.narration, 8) or "Next", "highlight": []}
             render.encode_frames(scenes.render_frames("statement", fallback, duration, cursor, w, h), w, h, seg)
         segments.append(seg)
         padded = work / f"audio_{i}.wav"
@@ -91,7 +93,8 @@ def _motion(title, topic, seconds, aspect, out, work, settings, step, warnings, 
         step(15 + int(35 * i / total), f"Recording voice {i + 1} of {total}")
         audio_path, speech, spoken = voice.synthesize(beat.narration, work / f"voice_{i}", settings, rate)
         silent += 0 if spoken else 1
-        beat.dur = math.ceil(max(speech + 0.45, 3.2) * scenes.FPS) / scenes.FPS
+        hold = 1.0 if i == total - 1 else 0.45  # the closing scene lingers a moment before the video ends
+        beat.dur = math.ceil(max(speech + hold, 3.6 if i == total - 1 else 3.2) * scenes.FPS) / scenes.FPS
         padded = work / f"audio_{i}.wav"
         render.build_scene_audio(audio_path, beat.dur, padded)
         audios.append(padded)
@@ -150,6 +153,9 @@ def generate(req: Request, out: Path, settings: Settings, progress: Progress | N
     topic = req.topic.strip() or title
     seconds = max(15, min(90, req.seconds))
     aspect = req.aspect if req.aspect in ("9:16", "16:9") else "9:16"
+    if req.kind in ("motion", "explainer") and aspect != "9:16":
+        aspect = "9:16"  # animated videos are always vertical, so every one looks the same
+        warnings.append("Animated and Motion videos are always vertical.")
     work = out.parent / f"{out.stem}_work"
     work.mkdir(parents=True, exist_ok=True)
 

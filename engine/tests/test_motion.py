@@ -40,6 +40,24 @@ class CodeSceneTests(unittest.TestCase):
             self.assertEqual(motion.extract_code("```js\n" + ok + bad + "\n```"), "", bad)
         self.assertEqual(motion.extract_code("```js\ng.bg()\n```"), "")  # too short to be a real scene
 
+    def test_headline_never_ends_mid_thought(self):
+        text = "Then the spider uses its hind legs to guide the thread and pull it tight"
+        head = motion.headline(text)
+        self.assertLessEqual(len(head.split()), 4)
+        self.assertNotIn(head.split()[-1].lower(), ("and", "the", "to", "of", "a"))
+        lines = motion._lines(text)
+        self.assertEqual(" ".join(lines), head)
+        self.assertEqual(motion._short("The system breaks a long sentence into pieces", 16), "The system")
+
+    def test_long_narration_is_split_and_every_video_gets_an_outro(self):
+        long = "Spinnerets release liquid silk, which hardens in the air as the spider pulls it out. " * 2
+        beats = motion.split_long([motion.Beat(long.strip(), "icon", {"icon": "star", "text": "x"}, 0)])
+        self.assertEqual(len(beats), 2)
+        self.assertEqual(beats[1].type, "kinetic")
+        done = motion.with_outro(beats, "How spiders spin")
+        self.assertEqual(done[-1].type, "outro")
+        self.assertEqual(motion.with_outro(done, "x"), done)  # not added twice
+
     def test_icon_scene_types_are_sanitized(self):
         b = motion.sanitize_beat({"narration": "Save money", "type": "icon", "data": {"icon": "nonsense", "text": "Save"}, "visual": "a coin"})
         self.assertEqual((b.type, b.data["icon"], b.visual), ("icon", "star", "a coin"))
@@ -82,6 +100,35 @@ class BrowserTests(unittest.TestCase):
             beats.append(b)
         problems = motion.check_code(beats, 270, 480)
         self.assertEqual(sorted(problems), [1, 2, 3])
+
+    def test_dry_run_enforces_text_and_layout_rules(self):
+        pad = "\n// padding padding padding padding padding padding padding\n"
+        bad = {
+            "tiny": "g.bg(g.th.bg);\ng.text('Small label', g.W/2, g.H/2, 30, g.th.fg);\ng.icon('rocket', g.W/2, g.H*0.3, 500, {t});" + pad,
+            "overlap": "g.bg(g.th.bg);\ng.icon('bulb', g.W/2, g.H/2, 700, {t});\ng.text('BRIGHT IDEAS', g.W/2, g.H/2, 150, g.th.fg);" + pad,
+            "offedge": "g.bg(g.th.bg);\ng.icon('globe', g.W/2, g.H*0.4, 500, {t});\ng.text('THIS TEXT IS WAY TOO LONG TO FIT ON ONE LINE', g.W/2, g.H*0.8, 140, g.th.fg);" + pad,
+            "still": "g.bg(g.th.bg);\ng.icon('house', g.W/2, g.H/2, 600, {idle:'none'});" + pad,
+            "empty": "g.bg('#0b3d2e');\ng.glow(g.W/2,g.H/2,300,'rgba(80,255,160,0.3)',0.4);" + pad,
+            "nobg": "g.icon('globe', g.W/2, g.H*0.4, 500, {t});\ng.text('GLOBE', g.W/2, g.H*0.8, 150, g.th.fg);" + pad,
+        }
+        beats = []
+        for i, code in enumerate(bad.values()):
+            b = motion.Beat("x", "kinetic", {"lines": ["f"]}, i, dur=6.0)
+            b.code = code
+            beats.append(b)
+        problems = motion.check_code(beats, 270, 480)
+        self.assertEqual(sorted(problems), list(range(len(bad))))
+        for key, i in zip(("too small", "overlaps", "edge", "moves", "empty", "fill"), range(len(bad))):
+            self.assertIn(key, problems[i], key)
+
+    def test_bundled_examples_follow_their_own_rules_in_both_shapes(self):
+        beats = []
+        for i, name in enumerate(("rocket", "growth", "compare", "flow")):
+            b = motion.Beat("x", "kinetic", {"lines": ["f"]}, i, dur=6.0)
+            b.code = (motion.ASSETS / "examples" / f"{name}.js").read_text()
+            beats.append(b)
+        self.assertEqual(motion.check_code(beats, 270, 480), {})
+        self.assertEqual(motion.check_code(beats, 480, 270), {})
 
 
 if __name__ == "__main__":

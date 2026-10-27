@@ -247,9 +247,21 @@
   }
   els.title.addEventListener("input", syncTitle);
 
+  // Animated and Motion videos are always vertical, so the Wide choice only exists for Footage videos.
+  function lockVertical() {
+    const wide = form.querySelector('input[name="aspect"][value="16:9"]');
+    const tall = form.querySelector('input[name="aspect"][value="9:16"]');
+    const footage = (form.querySelector('input[name="kind"]:checked') || {}).value === "footage";
+    wide.disabled = !footage;
+    wide.parentElement.style.opacity = footage ? "" : "0.4";
+    if (!footage && wide.checked) { tall.checked = true; layout.dataset.aspect = "9:16"; }
+  }
+  lockVertical();
+
   form.addEventListener("change", (e) => {
     if (e.target.name === "aspect") layout.dataset.aspect = e.target.value;
     if (e.target.name === "kind") {
+      lockVertical();
       $("kind-hint").textContent = {
         explainer: "Animated charts, numbers and text drawn by code. No stock clips.",
         motion: "Bold kinetic type, 3D shapes and app scenes, drawn by code. No stock clips.",

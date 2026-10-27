@@ -22,11 +22,14 @@ from . import script
 from .config import Settings
 
 ASSETS = Path(__file__).parent / "motion_assets"
-TYPES = ("kinetic", "burst", "number", "list", "pattern", "ring", "cube", "phone", "route", "world", "icon", "iconrow")
+TYPES = ("kinetic", "burst", "number", "list", "pattern", "ring", "cube", "phone", "route", "world", "icon", "iconrow", "outro")
 ICON_NAMES = ("rocket", "coin", "bulb", "clock", "heart", "shield", "lock", "cart", "house", "gear", "globe", "star", "growth", "magnifier",
               "person", "check", "phone", "laptop", "cloud", "sun", "tree", "car", "plane", "book", "bolt", "trophy", "fire", "drop", "chat",
               "mail", "camera", "flask", "pin", "users", "battery", "wifi", "chip")
 FACT_TYPES = {"number"}
+
+
+LAST_CHECKS: list = []  # the most recent dry-run results, kept for debugging and tests
 
 
 class MotionError(RuntimeError):
@@ -44,75 +47,132 @@ class Beat:
     code: str = ""  # AI-written drawing code for this scene, if it passed the checks
 
 
-def _s(v, n: int) -> str:
-    return " ".join(str(v or "").split())[:n].strip()
+_WEAK_END = {"a", "an", "the", "and", "or", "but", "of", "to", "in", "on", "at", "for", "with", "by", "from", "as", "is", "are", "was", "were",
+             "that", "which", "its", "their", "his", "her", "our", "your", "into", "then", "so", "than", "this", "these", "those", "it", "be"}
 
 
-def _items(v, n: int, each: int = 40) -> list[str]:
-    return [t for t in (_s(x, each) for x in (v if isinstance(v, list) else [])) if t][:n]
+def _short(v, n: int) -> str:
+    """Clean text and, if it is too long, cut it at a word boundary without leaving a dangling 'and' or 'the'."""
+    text = " ".join(str(v or "").split())
+    if len(text) <= n:
+        return text
+    cut = text[:n].rsplit(" ", 1)[0]
+    words = cut.split()
+    while len(words) > 1 and words[-1].lower().strip(",.;:") in _WEAK_END:
+        words.pop()
+    return " ".join(words).rstrip(",;:- ")
+
+
+_s = _short  # kept short name for the many call sites below
+
+
+_FILLER = _WEAK_END | {"then", "next", "now", "also", "just", "very", "can", "will", "how", "what", "why", "when", "where", "who", "do", "does",
+                       "did", "has", "have", "had", "you", "we", "they", "he", "she", "i", "my", "me", "us", "them", "there", "here", "up", "out",
+                       "about", "over", "after", "before", "while", "because", "if", "not", "no", "only", "even", "still", "each", "every",
+                       "some", "many", "more", "most", "such", "like", "get", "gets", "uses", "use", "using", "makes", "make", "called"}
+
+
+def headline(narration: str, max_words: int = 4) -> str:
+    """A short title for a scene made of its main words, so it always reads as complete, never a sentence cut off mid-thought."""
+    text = " ".join(str(narration or "").replace("\n", " ").split())
+    clause = re.split(r"[,;:.!?\u2014]| - ", text, maxsplit=1)[0].strip() or text
+    words = clause.split()
+    keep = [w for w in words if w.lower().strip(",.;:'\"") not in _FILLER]
+    if len(keep) < 2:  # a very short or all-filler clause: fall back to the plain first words
+        keep = words[:max_words]
+        while len(keep) > 1 and keep[-1].lower().strip(",.;:") in _WEAK_END:
+            keep.pop()
+    return " ".join(keep[:max_words])
+
+
+def _items(v, n: int, each: int = 22) -> list[str]:
+    return [t for t in (_short(x, each) for x in (v if isinstance(v, list) else [])) if t][:n]
 
 
 def _lines(narration: str) -> list[str]:
-    """Split a sentence into 2-4 short display lines."""
-    words = narration.replace("\n", " ").split()[:12]
-    n = 2 if len(words) <= 6 else 3 if len(words) <= 9 else 4
+    """Split a scene's headline into 1-3 short display lines (always the whole headline)."""
+    words = headline(narration).split() or ["Next"]
+    n = 1 if len(words) <= 2 else 2 if len(words) <= 4 else 3
     size = -(-len(words) // n)
-    return [" ".join(words[i:i + size]) for i in range(0, len(words), size)] or [narration[:30]]
+    return [" ".join(words[i:i + size]) for i in range(0, len(words), size)]
+
+
+def split_long(beats: list["Beat"], max_words: int = 22) -> list["Beat"]:
+    """A scene that talks for more than about eight seconds would sit still on screen, so split it in two at a clause or sentence."""
+    out: list[Beat] = []
+    for b in beats:
+        words = b.narration.split()
+        if len(words) <= max_words:
+            out.append(b)
+            continue
+        mid = len(words) / 2
+        best, best_gap = None, 1e9
+        for i, w in enumerate(words[:-3]):
+            if i >= 3 and w[-1] in ".!?;,:" and abs(i - mid) < best_gap:
+                best, best_gap = i + 1, abs(i - mid)
+        if best is None:
+            best = len(words) // 2
+        first, second = " ".join(words[:best]), " ".join(words[best:])
+        out.append(Beat(first, b.type, b.data, b.theme, visual=b.visual))
+        out.append(Beat(second, "kinetic", {"lines": _lines(second), "sub": ""}, b.theme + 1, visual=b.visual and f"Continue the same idea: {second}"))
+    return out
 
 
 def sanitize_beat(raw: dict, index: int = 0) -> Beat | None:
     if not isinstance(raw, dict):
         return None
-    narration = _s(raw.get("narration"), 400)
+    narration = _short(raw.get("narration"), 400)
     if not narration:
         return None
     kind = raw.get("type") if raw.get("type") in TYPES else "kinetic"
     d = raw.get("data") if isinstance(raw.get("data"), dict) else {}
     theme = raw.get("theme") if isinstance(raw.get("theme"), int) else index
-    visual = _s(raw.get("visual"), 400)
+    visual = _short(raw.get("visual"), 400)
     if kind == "kinetic":
-        lines = [t for t in (_s(x, 24) for x in d.get("lines", []) if isinstance(x, (str, int))) if t][:4] if isinstance(d.get("lines"), list) else []
-        data = {"lines": lines or _lines(narration), "sub": _s(d.get("sub"), 50)}
+        lines = [t for t in (_short(x, 16) for x in d.get("lines", []) if isinstance(x, (str, int))) if t][:4] if isinstance(d.get("lines"), list) else []
+        data = {"lines": lines or _lines(narration), "sub": _short(d.get("sub"), 30)}
         if isinstance(d.get("accent"), int):
             data["accent"] = d["accent"]
     elif kind in ("burst", "pattern", "ring"):
-        text = _s(d.get("text"), 28) or _s(narration, 28)
-        data = {"text": text, "sub": _s(d.get("sub"), 50)}
+        text = _short(d.get("text"), 22) or headline(narration, 3)
+        data = {"text": text, "sub": _short(d.get("sub"), 30)}
     elif kind in ("cube", "world"):
-        data = {"text": _s(d.get("text"), 30) or _s(narration, 30)}
+        data = {"text": _short(d.get("text"), 22) or headline(narration, 3)}
+    elif kind == "outro":
+        data = {"text": _short(d.get("text"), 22) or headline(narration, 3), "sub": _short(d.get("sub"), 30), "icon": d.get("icon") if d.get("icon") in ICON_NAMES else "check"}
     elif kind == "icon":
         icon = d.get("icon") if d.get("icon") in ICON_NAMES else "star"
-        data = {"icon": icon, "text": _s(d.get("text"), 26) or _s(narration, 26), "sub": _s(d.get("sub"), 50)}
+        data = {"icon": icon, "text": _short(d.get("text"), 22) or headline(narration, 3), "sub": _short(d.get("sub"), 30)}
     elif kind == "iconrow":
         items = []
         for it in d.get("items", []) if isinstance(d.get("items"), list) else []:
-            if isinstance(it, dict) and _s(it.get("label"), 18):
-                items.append({"icon": it.get("icon") if it.get("icon") in ICON_NAMES else "star", "label": _s(it.get("label"), 18)})
+            if isinstance(it, dict) and _short(it.get("label"), 12):
+                items.append({"icon": it.get("icon") if it.get("icon") in ICON_NAMES else "star", "label": _short(it.get("label"), 12)})
         if len(items) < 2:
             return sanitize_beat({**raw, "type": "kinetic", "data": {}}, index)
-        data = {"title": _s(d.get("title"), 24), "items": items[:4]}
+        data = {"title": _short(d.get("title"), 22), "items": items[:4]}
     elif kind == "number":
         try:
             value = float(d.get("value"))
         except (TypeError, ValueError):
             return sanitize_beat({**raw, "type": "kinetic", "data": {}}, index)
-        data = {"value": int(value) if value == int(value) else round(value, 1), "prefix": _s(d.get("prefix"), 3),
-                "suffix": _s(d.get("suffix"), 6), "label": _s(d.get("label"), 40)}
+        data = {"value": int(value) if value == int(value) else round(value, 1), "prefix": _short(d.get("prefix"), 3),
+                "suffix": _short(d.get("suffix"), 6), "label": _short(d.get("label"), 22)}
     elif kind == "list":
         items = _items(d.get("items"), 5)
         if len(items) < 2:
             return sanitize_beat({**raw, "type": "kinetic", "data": {}}, index)
-        data = {"title": _s(d.get("title"), 24) or "Key points", "items": items}
+        data = {"title": _short(d.get("title"), 22) or "Key points", "items": items}
     elif kind == "phone":
-        items = _items(d.get("items"), 4, 28)
+        items = _items(d.get("items"), 4, 22)
         if len(items) < 2:
             return sanitize_beat({**raw, "type": "kinetic", "data": {}}, index)
-        data = {"title": _s(d.get("title"), 22) or "App", "items": items, "text": _s(d.get("text"), 26)}
+        data = {"title": _short(d.get("title"), 22) or "App", "items": items, "text": _short(d.get("text"), 22)}
     else:  # route
-        points = _items(d.get("points"), 4, 18)
+        points = _items(d.get("points"), 4, 12)
         if len(points) < 2:
             return sanitize_beat({**raw, "type": "kinetic", "data": {}}, index)
-        data = {"title": _s(d.get("title"), 26), "points": points}
+        data = {"title": _short(d.get("title"), 22), "points": points}
     return Beat(narration, kind, data, theme, visual=visual)
 
 
@@ -125,12 +185,23 @@ def parse_storyboard(content: str) -> list[Beat]:
     beats = [b for i, s in enumerate(data["scenes"]) if (b := sanitize_beat(s, i))]
     if not beats:
         raise ValueError("empty storyboard")
+    closing = _short(data.get("outro"), 120)
+    if closing:
+        beats.append(Beat(closing, "outro", {"text": headline(closing, 3), "sub": "", "icon": "check"}, len(beats)))
     return beats
 
 
+def with_outro(beats: list["Beat"], title: str) -> list["Beat"]:
+    """Every video ends on a proper closing scene, never just stops."""
+    if beats and beats[-1].type == "outro":
+        return beats
+    name = _short(title, 22) or "Thanks for watching"
+    return beats + [Beat(f"That is {title.strip()}, explained.", "outro", {"text": name, "sub": "", "icon": "check"}, len(beats))]
+
+
 SYSTEM = """You direct short motion-graphics videos in the style of polished explainer and promo animation: bold typography, drawn icons, 3D shapes and app-style scenes. Every scene has narration (spoken aloud) and an animated picture that must show what the narration says, literally and concretely.
-Reply with JSON only: {"scenes":[{"narration":"...","visual":"...","type":"...","theme":0,"data":{...}}]}
-"visual": one or two vivid sentences describing the picture to animate for this scene: the objects, what moves, what appears in what order (for example "A rocket lifts off from the bottom with a smoke trail while stars drift and a moon glows, the words TO THE MOON drop in at the top"). Be concrete and specific to this narration. Never describe people's faces or realistic photos: use icons, shapes, charts, objects and big words.
+Reply with JSON only: {"scenes":[{"narration":"...","visual":"...","type":"...","theme":0,"data":{...}}],"outro":"one closing sentence, at most 12 words"}
+"visual": one or two vivid sentences describing the picture to animate for this scene: the objects, what moves, what appears in what order (for example "A rocket lifts off from the bottom with a smoke trail while stars drift and a moon glows, the words TO THE MOON drop in at the top"). Be concrete and specific to this narration. Never describe people's faces or realistic photos: use icons, shapes, charts, objects and big words. The picture should be large and fill the frame.
 "type" and "data" are a simpler built-in version of the same scene, used if the custom animation fails:
 - kinetic: {"lines":["2-4 words max","per line","up to 4 lines"],"accent":1,"sub":"optional"} stacked punchy words, "accent" is the index of the line to highlight.
 - burst: {"text":"TWO WORDS","sub":"optional"} loud sticker words over a sunburst. Hooks and reveals.
@@ -144,9 +215,12 @@ Reply with JSON only: {"scenes":[{"narration":"...","visual":"...","type":"...",
 Icons: rocket, coin, bulb, clock, heart, shield, lock, cart, house, gear, globe, star, growth, magnifier, person, check, phone, laptop, cloud, sun, tree, car, plane, book, bolt, trophy, fire, drop, chat, mail, camera, flask, pin, users, battery, wifi, chip.
 "theme" is 0 to 7, a colour palette: 0 cream, 1 midnight, 2 yellow, 3 blue, 4 black and orange, 5 ice, 6 forest, 7 red. Change it between scenes.
 Rules:
-- Open with a hook scene that grabs attention. Close with a scene that lands the point.
+- Each scene's narration is ONE complete sentence of at most 18 words (about 6 seconds). Never leave a sentence unfinished.
+- Open with a hook scene that grabs attention. The last scene states the final key fact; the "outro" is a separate short wrap-up line.
+- Each scene shows ONE idea with ONE large title. Titles are 1 to 4 plain words. No text inside boxes, bars or chips, no long labels.
+- The "visual" must draw the actual concept the narration is about (the real thing, a diagram of the mechanism, or a clear symbol of it), large and centred. Never decoration without meaning.
 - Vary the scene types and the visuals. Never the same type twice in a row.
-- Use numbers and statistics ONLY when you are confident they are real. Never invent figures.
+- Facts must be accurate and consistent. Never list two alternatives as if both are present, and never repeat the same fact twice. Use numbers and statistics ONLY when you are confident they are real. Never invent figures.
 - Plain spoken language, no stage directions, no emojis."""
 
 
@@ -191,7 +265,7 @@ def make_storyboard(title: str, topic: str, seconds: int, settings: Settings, st
     warnings: list[str] = []
     if settings.live_script:
         try:
-            beats = llm_storyboard(title, topic, seconds, settings, style_hint)
+            beats = with_outro(split_long(llm_storyboard(title, topic, seconds, settings, style_hint)), title)
             if any(b.type in FACT_TYPES for b in beats):
                 warnings.append("Numbers in motion videos are written by the AI. Check them before you publish.")
             return beats, warnings
@@ -200,7 +274,7 @@ def make_storyboard(title: str, topic: str, seconds: int, settings: Settings, st
             warnings.append(f"Script writer unavailable, used a template instead ({exc.__class__.__name__} {code}).".replace(" )", ")"))
     else:
         warnings.append("No script key set, used a template script. Add FRIDAY_LLM_API_KEY for real scripts.")
-    return demo_storyboard(title, topic, seconds), warnings
+    return with_outro(demo_storyboard(title, topic, seconds), title), warnings
 
 
 # ---------- AI-written scene animation ----------
@@ -221,9 +295,12 @@ Toolkit:
  g.path(svgPathString)              a Path2D from SVG path data, for your own drawings: ctx.fill(g.path("M10 10 L50 10 ..."))
  g.ease.out/inOut/back/elastic/in (x in 0..1 -> eased 0..1)   g.seg(t,a,b) = progress of t between a and b clamped 0..1   g.lerp(a,b,k)   g.clamp(v,0,1)   g.rng(seed) returns a deterministic random function   g.hex(color,alpha) -> rgba string
  g.project(x,y,z,{rx,ry,f,dz,cx,cy}) simple 3D perspective, returns [screenX,screenY,scale,depth]
-Rules:
-- Make it look professionally animated: layered backgrounds (gradient, glow, drifting shapes), a clear main subject, staggered entrances with overshoot (ease.back / ease.elastic), continuous gentle idle motion afterwards, and text that pops in. Big, bold, readable text of at most 6 words. Fill the frame: avoid tiny content in a big empty area.
-- Show the idea of the narration with drawn things: icons, shapes, charts, arrows, objects built from paths and simple shapes. Write real shapes, not placeholders.
+Rules (a scene that breaks them is rejected and redrawn):
+- ONE large title per scene, at most 4 words, size 110 or more, high contrast with the background. One short secondary line is allowed, size 64 or more. NEVER any text smaller than 64. NEVER put text inside boxes, bars, chips or tags, and no labels on tiny parts: show ideas with big pictures, not captions.
+- Text must be complete (never cut a sentence), fully inside the frame (keep 6% margins), and never overlap other text or icons. Check positions: titles go in the top 20% or bottom 20% or beside the picture, never on top of the main picture.
+- Show the ACTUAL concept of the narration with a large picture in the middle that fills at least half of the frame: the real thing, a diagram of how it works, or a clear symbol. Never decoration with no meaning. No piles of unexplained tiles or dots.
+- Always start with g.bg(...) so the whole frame is filled. Something must keep moving the whole time (idle motion, travelling dots, rotating or pulsing parts), not just the entrance.
+- Make it look professionally animated: layered backgrounds (gradient, glow, drifting shapes), a clear main subject, staggered entrances with overshoot (ease.back / ease.elastic), continuous gentle idle motion afterwards, and text that pops in.
 - Use only the toolkit and plain JavaScript (Math, arrays, loops with fixed bounds). No while loops, no document/window/fetch/import, no timers, no Date.now: only t. Keep it under 120 lines and fast (under 3000 shapes per frame).
 - Reply with ONLY the function body inside one ```js fenced block."""
 
@@ -232,7 +309,8 @@ def _examples() -> str:
     parts = []
     for name, brief in (("rocket", "A rocket lifts off past a glowing moon; the words TO THE MOON drop in."),
                         ("growth", "Bars rise year by year while a percentage counts up to 100%."),
-                        ("compare", "Two cards, Rent and Buy, pop in with icons and ticked points and a VS badge.")):
+                        ("compare", "Two options, Rent and Buy, each a big icon with one big word, and a VS badge."),
+                        ("flow", "A three-step flow: input, process, result, with dots travelling between the steps.")):
         parts.append(f"Example brief: {brief}\n```js\n{(ASSETS / 'examples' / f'{name}.js').read_text().strip()}\n```")
     return "\n\n".join(parts)
 
@@ -350,12 +428,14 @@ def frames(beats: list[Beat], w: int, h: int, fps: int = 30, report: list[str] |
                 page.set_default_timeout(90000)
                 page.evaluate("([s, w, h]) => window.setup(s, w, h)", [story, w, h])
                 checks = page.evaluate("() => window.checkBeats()")
+                global LAST_CHECKS
+                LAST_CHECKS = checks
                 bad = 0
                 for i, c in enumerate(checks):
                     if c and not c["ok"]:
                         bad += 1
                         if check_only is not None:
-                            check_only[i] = c["err"][:120]
+                            check_only[i] = c["err"][:300]
                         page.evaluate("(i) => window.disableBeat(i)", i)
                         if report is not None:
                             report.append(f"scene {i + 1} animation ({c['err'][:60]})")

@@ -136,6 +136,7 @@ ICONS.map = ICONS.pin; ICONS.people = ICONS.users; ICONS.internet = ICONS.wifi; 
 
 function drawIcon(name, x, y, size, o) {
   const ic = ICONS[name] || ICONS.star, t = o.t || 0;
+  if (registry) { const m = ctx.getTransform(), sc = Math.hypot(m.a, m.b), cx = m.a * x + m.c * y + m.e, cy = m.b * x + m.d * y + m.f, h = (size * sc) / 2; registry.push({ kind: "icon", name, x0: cx - h * 0.8, y0: cy - h * 0.8, x1: cx + h * 0.8, y1: cy + h * 0.8, alpha: ctx.globalAlpha }); }
   ctx.save(); ctx.translate(x, y); ctx.scale(size / 100, size / 100);
   if (o.flip) ctx.scale(-1, 1);
   if (o.rot) ctx.rotate(o.rot);
@@ -227,4 +228,18 @@ SCENES.iconrow = function (t, d, data, th) {
     const lab = String(it.label || "").toUpperCase(), lx = portrait ? W * 0.07 + chh * 1.05 : x, ly = portrait ? y : y + size * 0.62;
     text(lab, lx, ly, fit(lab, FONT.black, 400, portrait ? W * 0.86 - chh * 1.2 : cw * 0.92, portrait ? chh * 0.34 : 70 * U), FONT.black, th.fg, { weight: 400, align: portrait ? "left" : "center", alpha: clamp(p * 2) });
   });
+};
+
+/* Closing scene: the last thing a viewer sees. Big title, a check mark that draws itself, rings of light. */
+SCENES.outro = function (t, d, data, th) {
+  const g0 = ctx.createLinearGradient(0, 0, 0, H); g0.addColorStop(0, th.bg); g0.addColorStop(1, th.soft); ctx.fillStyle = g0; ctx.fillRect(0, 0, W, H); TH = th;
+  const cx = W / 2, cy = contentH() * 0.36, S = Math.min(W * 0.4, contentH() * 0.26);
+  for (let i = 0; i < 3; i++) { const k = ((t * 0.5 + i / 3) % 1); ctx.strokeStyle = hexA(i % 2 ? th.alt : th.accent, 0.6 * (1 - k)); ctx.lineWidth = 8 * U; ctx.beginPath(); ctx.arc(cx, cy, S * (0.7 + k * 1.1), 0, TAU); ctx.stroke(); }
+  glow(cx, cy, S * 1.3, hexA(th.accent, 0.6), th.dark ? 0.7 : 0.35);
+  drawIcon(data.icon || "check", cx, cy, S * eElastic(seg(t, 0.05, 0.9)), { t, shadow: true });
+  const title = String(data.text || "").toUpperCase(), words = title.split(" "), mid = Math.ceil(words.length / 2);
+  const lines = words.length > 2 ? [words.slice(0, mid).join(" "), words.slice(mid).join(" ")] : [title];
+  const size = Math.min(...lines.map((l) => fit(l, FONT.black, 400, W * 0.88, 150 * U)));
+  lines.forEach((l, i) => text(l, W / 2, contentH() * 0.66 + i * size * 1.1, size, FONT.black, i === lines.length - 1 ? th.accent : th.fg, { weight: 400, scale: lerp(0.7, 1, eBack(seg(t, 0.4 + i * 0.2, 1.0 + i * 0.2))), alpha: eOut(seg(t, 0.3 + i * 0.2, 0.7 + i * 0.2)) }));
+  if (data.sub) text(data.sub, W / 2, contentH() * 0.66 + lines.length * size * 1.1 + 40 * U, 64 * U, FONT.serif, th.fg, { alpha: eOut(seg(t, 1.2, 1.7)) * 0.9 });
 };

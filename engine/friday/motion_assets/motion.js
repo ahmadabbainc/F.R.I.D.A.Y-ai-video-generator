@@ -37,12 +37,40 @@ function fit(text, family, weight, maxW, maxSize) {
   const w = ctx.measureText(text).width || 1;
   return Math.min(maxSize, (100 * maxW) / w);
 }
+const MIN_TEXT_UNITS = 64; // smallest text allowed anywhere, in design units (the short side of the frame is 1080)
+let registry = null; // while a scene is being checked: every text and icon drawn is recorded here
+const _col = document.createElement("canvas").getContext("2d");
+function rgbOf(c) { _col.fillStyle = "#000"; _col.fillStyle = c; const v = _col.fillStyle; if (v[0] === "#") { const n = parseInt(v.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; } const m = v.match(/[\d.]+/g) || [0, 0, 0]; return [+m[0], +m[1], +m[2]]; }
+function lum([r, g, b]) { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); }
+function contrast(a, b) { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+function backdrop(x0, y0, x1, y1) {
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let i = 0; i < 5; i++) for (let j = 0; j < 2; j++) {
+    const px = Math.round(clamp(x0 + ((x1 - x0) * (i + 0.5)) / 5, 0, W - 1)), py = Math.round(clamp(y0 + ((y1 - y0) * (j + 0.5)) / 2, 0, H - 1));
+    const d = ctx.getImageData(px, py, 1, 1).data; if (d[3] < 40) continue; r += d[0]; g += d[1]; b += d[2]; n++;
+  }
+  return n ? [r / n, g / n, b / n] : null;
+}
 function text(str, x, y, size, family, color, opts = {}) {
   ctx.save();
+  const m0 = ctx.getTransform(), sc = Math.hypot(m0.a, m0.b) || 1, minPx = MIN_TEXT_UNITS * U, raw = size * sc;
+  if (raw < minPx) size = minPx / sc;
   ctx.font = `${opts.weight || 400} ${size}px ${family}`;
   ctx.textAlign = opts.align || "center";
   ctx.textBaseline = "middle";
-  if (opts.rot || opts.scale != null) { ctx.translate(x, y); ctx.rotate(opts.rot || 0); const s = opts.scale == null ? 1 : opts.scale; ctx.scale(s, s); x = 0; y = 0; }
+  const ts = opts.scale == null ? 1 : opts.scale, tw = ctx.measureText(str).width * ts * sc, th2 = size * ts * sc;
+  const dx = m0.a * x + m0.c * y + m0.e, dy = m0.b * x + m0.d * y + m0.f, al = opts.align || "center";
+  const bx0 = al === "left" ? dx : al === "right" ? dx - tw : dx - tw / 2, by0 = dy - th2 * 0.5;
+  const alpha = (opts.alpha == null ? 1 : opts.alpha) * ctx.globalAlpha;
+  if (registry) registry.push({ kind: "text", str, x0: bx0, y0: by0, x1: bx0 + tw, y1: by0 + th2, raw, alpha });
+  // keep text readable: if it would sit on a background of similar brightness, switch to black or white
+  if (alpha > 0.5 && !opts.keepColor) {
+    try {
+      const bgc = backdrop(bx0, by0, bx0 + tw, by0 + th2);
+      if (bgc && contrast(rgbOf(color), bgc) < 3.6) color = contrast([255, 255, 255], bgc) >= contrast([17, 17, 17], bgc) ? "#ffffff" : "#111111";
+    } catch (e) { /* reading pixels is a nicety, never a requirement */ }
+  }
+  if (opts.rot || opts.scale != null) { ctx.translate(x, y); ctx.rotate(opts.rot || 0); ctx.scale(ts, ts); x = 0; y = 0; }
   if (opts.shadow) { ctx.fillStyle = opts.shadow; ctx.fillText(str, x + opts.sd * U, y + opts.sd * U); }
   ctx.globalAlpha *= opts.alpha == null ? 1 : opts.alpha;
   ctx.fillStyle = color;
@@ -111,14 +139,14 @@ function sceneKinetic(t, d, data, th) {
       const sz = fit(line.toUpperCase(), FONT.black, 400, maxW, common);
       ctx.font = `400 ${sz}px ${FONT.black}`;
       const tw = ctx.measureText(line.toUpperCase()).width + sz * 0.5;
-      ctx.save(); ctx.translate(W / 2, ty); ctx.rotate(-0.025); ctx.scale(s * eOut(p), s);
+      ctx.save(); ctx.translate(W / 2, ty); ctx.rotate(-0.025); ctx.scale(s, s); ctx.globalAlpha = clamp(p * 3);
       ctx.fillStyle = th.accent; rrect(-tw / 2, -sz * 0.62, tw, sz * 1.24, sz * 0.2); ctx.fill(); ctx.restore();
     }
     text(line.toUpperCase(), W / 2, ty, common, FONT.black, isHi ? (th.dark && th.accent === "#17140f" ? th.fg : th.bg) : th.fg,
       { weight: 400, scale: s, alpha: clamp(p * 3), rot: isHi ? -0.025 : 0 });
     y += common + gap;
   });
-  if (data.sub) text(data.sub, W / 2, zone * 0.92, 56 * U, FONT.serif, th.fg, { weight: 400, alpha: eOut(seg(t, 0.8, 1.3)) * 0.85 });
+  if (data.sub) text(data.sub, W / 2, zone * 0.92, 64 * U, FONT.serif, th.fg, { weight: 400, alpha: eOut(seg(t, 0.8, 1.3)) * 0.85 });
 }
 
 function sceneBurst(t, d, data, th) {
@@ -139,7 +167,7 @@ function sceneBurst(t, d, data, th) {
     text(w, W / 2, y, size, FONT.black, i === words.length - 1 ? th.accent : th.fg,
       { weight: 400, scale: lerp(0.2, 1, eElastic(p)), rot: lerp(-0.12, -0.04, eOut(p)), shadow: th.fg === "#ffffff" ? hexA("#000000", 0.35) : hexA(th.alt, 0.9), sd: size * 0.045, alpha: clamp(p * 4) });
   });
-  if (data.sub) text(data.sub, W / 2, contentH() * 0.9, 58 * U, FONT.serif, th.fg, { alpha: eOut(seg(t, 0.9, 1.4)) });
+  if (data.sub) text(data.sub, W / 2, contentH() * 0.9, 64 * U, FONT.serif, th.fg, { alpha: eOut(seg(t, 0.9, 1.4)) });
 }
 
 function formatNum(v, decimals) { return v.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }); }
@@ -156,7 +184,7 @@ function sceneNumber(t, d, data, th) {
   const s = fit(label, FONT.black, 400, R * 1.7, 200 * U);
   text(label, cx, cy, s, FONT.black, th.fg, { weight: 400, scale: lerp(0.85, 1, eBack(seg(t, 0, 0.5))) });
   if (data.label) {
-    const ls = fit(data.label.toUpperCase(), FONT.bold, 700, W * 0.8, 74 * U);
+    const ls = fit(data.label.toUpperCase(), FONT.bold, 700, W * 0.86, 74 * U);
     text(data.label.toUpperCase(), cx, cy + R + 90 * U, ls, FONT.bold, th.fg, { weight: 700, alpha: eOut(seg(t, 0.6, 1.1)) });
   }
   const r = rng(5);
@@ -170,21 +198,17 @@ function sceneNumber(t, d, data, th) {
 function sceneList(t, d, data, th) {
   bg(th); floatBlobs(t, th);
   const items = (data.items || []).slice(0, 5), zone = contentH();
-  const ts = fit((data.title || "").toUpperCase(), FONT.black, 400, W * 0.84, 120 * U);
-  text((data.title || "").toUpperCase(), W / 2, zone * 0.12, ts, FONT.black, th.fg, { weight: 400, scale: lerp(0.7, 1, eBack(seg(t, 0, 0.6))), alpha: clamp(t * 4) });
-  const rowH = Math.min(zone * 0.145, 200 * U), gap = rowH * 0.22, top = zone * 0.2;
+  const ts = fit((data.title || "").toUpperCase(), FONT.black, 400, W * 0.86, 140 * U);
+  text((data.title || "").toUpperCase(), W / 2, zone * 0.13, ts, FONT.black, th.fg, { weight: 400, scale: lerp(0.7, 1, eBack(seg(t, 0, 0.6))), alpha: clamp(t * 4) });
+  const step = (zone * 0.72) / Math.max(items.length, 1), top = zone * 0.28;
   items.forEach((it, i) => {
-    const p = seg(t, 0.4 + i * 0.28, 1.0 + i * 0.28), x = lerp(-W, 0, eBack(p));
-    const y = top + i * (rowH + gap), w = W * 0.86;
-    ctx.save(); ctx.translate(x, 0);
-    ctx.fillStyle = th.dark ? th.soft : "#ffffff"; ctx.shadowColor = "rgba(0,0,0,0.25)"; ctx.shadowBlur = 24 * U; ctx.shadowOffsetY = 8 * U;
-    rrect((W - w) / 2, y, w, rowH, rowH * 0.3); ctx.fill(); ctx.shadowColor = "transparent";
-    ctx.fillStyle = i % 2 ? th.alt : th.accent; ctx.beginPath(); ctx.arc((W - w) / 2 + rowH * 0.5, y + rowH / 2, rowH * 0.27, 0, TAU); ctx.fill();
-    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = rowH * 0.07; ctx.lineCap = "round"; ctx.lineJoin = "round";
-    const ck = eOut(seg(t, 0.7 + i * 0.28, 1.1 + i * 0.28)), cx0 = (W - w) / 2 + rowH * 0.5, cy0 = y + rowH / 2, q = rowH * 0.12;
-    ctx.beginPath(); ctx.moveTo(cx0 - q, cy0); ctx.lineTo(cx0 - q * 0.25, cy0 + q * 0.8); ctx.lineTo(cx0 - q + (2 * q * 1.1) * ck, cy0 + q * 0.8 - (q * 1.6) * ck); ctx.stroke();
-    const fs = fit(it, FONT.bold, 700, w - rowH * 1.3, rowH * 0.42);
-    text(it, (W - w) / 2 + rowH * 1.0, y + rowH / 2, fs, FONT.bold, th.dark ? th.fg : "#17140f", { weight: 700, align: "left" });
+    const p = seg(t, 0.4 + i * 0.3, 1.0 + i * 0.3), x = lerp(-W * 0.4, 0, eOut(p)), y = top + i * step, r = Math.min(step * 0.3, 56 * U);
+    ctx.save(); ctx.globalAlpha = clamp(p * 2.5); ctx.translate(x, 0);
+    ctx.fillStyle = i % 2 ? th.alt : th.accent; ctx.beginPath(); ctx.arc(W * 0.1 + r, y, r, 0, TAU); ctx.fill();
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = r * 0.22; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    const ck = eOut(seg(t, 0.6 + i * 0.3, 1.0 + i * 0.3)), c0 = W * 0.1 + r;
+    ctx.beginPath(); ctx.moveTo(c0 - r * 0.4, y); ctx.lineTo(c0 - r * 0.1, y + r * 0.35); ctx.lineTo(c0 - r * 0.4 + r * 0.9 * ck, y + r * 0.35 - r * 0.7 * ck); ctx.stroke();
+    text(it, W * 0.1 + r * 2.5, y, fit(it, FONT.bold, 700, W * 0.78 - r * 2, 96 * U), FONT.bold, th.fg, { weight: 700, align: "left" });
     ctx.restore();
   });
 }
@@ -211,7 +235,7 @@ function scenePattern(t, d, data, th) {
   rrect(-cw / 2, -ch / 2, cw, ch, 36 * U); ctx.fill(); ctx.shadowColor = "transparent";
   const s = fit((data.text || "").toUpperCase(), FONT.black, 400, cw * 0.86, 150 * U);
   text((data.text || "").toUpperCase(), 0, data.sub ? -ch * 0.1 : 0, s, FONT.black, th.fg, { weight: 400 });
-  if (data.sub) text(data.sub, 0, ch * 0.28, fit(data.sub, FONT.serif, 400, cw * 0.8, 44 * U), FONT.serif, th.accent, { weight: 400 });
+  if (data.sub) text(data.sub, 0, ch * 0.28, fit(data.sub, FONT.serif, 400, cw * 0.86, 64 * U), FONT.serif, th.accent, { weight: 400 });
   ctx.restore();
 }
 
@@ -237,7 +261,7 @@ function sceneRing(t, d, data, th) {
   glow(W / 2, contentH() * 0.45, R * 1.2, hexA(th.accent, 0.25), 0.7);
   const s = fit((data.text || "").toUpperCase(), FONT.black, 400, W * 0.84, 150 * U);
   text((data.text || "").toUpperCase(), W / 2, contentH() * 0.45, s, FONT.black, "#ffffff", { weight: 400, scale: lerp(0.85, 1, eBack(seg(t, 0.3, 1))), alpha: eOut(seg(t, 0.2, 0.7)) });
-  if (data.sub) text(data.sub, W / 2, contentH() * 0.45 + s * 0.8, 56 * U, FONT.serif, "#cfe8ff", { alpha: eOut(seg(t, 0.9, 1.4)) });
+  if (data.sub) text(data.sub, W / 2, contentH() * 0.45 + s * 0.8, 64 * U, FONT.serif, "#cfe8ff", { alpha: eOut(seg(t, 0.9, 1.4)) });
 }
 
 function sceneCube(t, d, data, th) {
@@ -273,21 +297,21 @@ function scenePhone(t, d, data, th) {
   const m = pw * 0.035; ctx.save(); rrect(-pw / 2 + m, -ph / 2 + m, pw - 2 * m, ph - 2 * m, pw * 0.11); ctx.clip();
   ctx.fillStyle = th.dark ? "#161a2e" : "#ffffff"; ctx.fillRect(-pw / 2, -ph / 2, pw, ph);
   const hdr = ph * 0.14; ctx.fillStyle = th.accent; ctx.fillRect(-pw / 2, -ph / 2, pw, hdr);
-  text((data.title || "").slice(0, 22), 0, -ph / 2 + hdr * 0.62, fit(data.title || "", FONT.bold, 700, pw * 0.8, pw * 0.1), FONT.bold, th.bg === "#ffd23f" ? "#14121a" : "#ffffff", { weight: 700 });
   const items = (data.items || []).slice(0, 4), cardH = ph * 0.15;
   items.forEach((it, i) => {
     const p = eOut(seg(t, 0.5 + i * 0.3, 1.0 + i * 0.3)), y = -ph / 2 + hdr + ph * 0.04 + i * (cardH + ph * 0.025);
     ctx.save(); ctx.globalAlpha = p; ctx.translate(lerp(pw * 0.4, 0, p), 0);
     ctx.fillStyle = th.dark ? th.soft : "#f1f3f8"; rrect(-pw * 0.43, y, pw * 0.86, cardH, cardH * 0.22); ctx.fill();
     ctx.fillStyle = i % 2 ? th.alt : th.accent; ctx.beginPath(); ctx.arc(-pw * 0.43 + cardH * 0.5, y + cardH / 2, cardH * 0.26, 0, TAU); ctx.fill();
-    text(it, -pw * 0.43 + cardH * 0.95, y + cardH / 2, fit(it, FONT.bold, 700, pw * 0.86 - cardH * 1.1, cardH * 0.3), FONT.bold, th.dark ? th.fg : "#17140f", { weight: 700, align: "left" });
+    ctx.fillStyle = hexA(th.fg, 0.35); rrect(-pw * 0.43 + cardH * 0.95, y + cardH * 0.3, pw * 0.5, cardH * 0.16, cardH * 0.08); ctx.fill();
+    ctx.fillStyle = hexA(th.fg, 0.2); rrect(-pw * 0.43 + cardH * 0.95, y + cardH * 0.56, pw * 0.34, cardH * 0.14, cardH * 0.07); ctx.fill();
     ctx.restore();
   });
   ctx.restore();
   ctx.fillStyle = "#0e0e12"; rrect(-pw * 0.17, -ph / 2 + m * 1.6, pw * 0.34, m * 1.6, m * 0.8); ctx.fill();
   ctx.restore();
   if (data.text) {
-    const s = fit(data.text.toUpperCase(), FONT.black, 400, W * 0.84, 90 * U);
+    const s = fit(data.text.toUpperCase(), FONT.black, 400, W * 0.86, 120 * U);
     text(data.text.toUpperCase(), W / 2, zone * 0.07, s, FONT.black, th.fg, { weight: 400, alpha: eOut(seg(t, 0.2, 0.7)) });
   }
 }
@@ -315,7 +339,7 @@ function sceneRoute(t, d, data, th) {
     glow(x, y, 90 * U * p, hexA(th.accent, 0.5), 0.8);
     ctx.fillStyle = i === n - 1 ? th.alt : th.accent; ctx.beginPath(); ctx.arc(x, y - 10 * U * (1 - p), pr, 0, TAU); ctx.fill();
     ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(x, y - 10 * U * (1 - p), pr * 0.4, 0, TAU); ctx.fill();
-    if (names[i]) text(names[i], x + (x < W / 2 ? 1 : -1) * 62 * U, y, fit(names[i], FONT.bold, 700, W * 0.3, 64 * U), FONT.bold, "#ffffff", { weight: 700, align: x < W / 2 ? "left" : "right", alpha: clamp(p) });
+    if (names[i]) text(names[i], x + (x < W / 2 ? 1 : -1) * 62 * U, y, fit(names[i], FONT.bold, 700, W * 0.42, 80 * U), FONT.bold, "#ffffff", { weight: 700, align: x < W / 2 ? "left" : "right", alpha: clamp(p) });
   });
   if (data.title) text(data.title.toUpperCase(), W / 2, zone * 0.06, fit(data.title.toUpperCase(), FONT.black, 400, W * 0.84, 110 * U), FONT.black, "#ffffff", { weight: 400 });
 }
@@ -367,6 +391,7 @@ let strict = false;
 function drawBeat(b, local) {
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
   let done = false;
+  if (!strict) bg(themeFor(b)); // every scene starts from a solid colour, so nothing of the previous scene can show through
   if (b.fn && !b.bad) {
     const th = themeFor(b);
     ctx.save(); ctx.scale(U, U);
@@ -380,14 +405,14 @@ function drawBeat(b, local) {
   }
   ctx.restore();
 }
-const WIPE = 0.5;
+const WIPE = 0.32;
 function wipeClip(kind, p) {
-  const e = eInOut(p);
+  const e = p > 0.985 ? 1 : eInOut(p), o = 2; // o: overshoot in pixels so rounding never leaves a hairline
   ctx.beginPath();
-  if (kind === "circle") ctx.arc(W / 2, H * 0.45, Math.hypot(W, H) * e, 0, TAU);
-  else if (kind === "up") ctx.rect(0, H * (1 - e), W, H * e);
-  else if (kind === "side") ctx.rect(0, 0, W * e, H);
-  else { const n = 5, bh = H / n; for (let i = 0; i < n; i++) ctx.rect(0, i * bh, W * clamp(e * 1.4 - i * 0.08), bh); }
+  if (kind === "circle") ctx.arc(W / 2, H * 0.45, Math.hypot(W, H) * e + o, 0, TAU);
+  else if (kind === "up") ctx.rect(-o, H * (1 - e) - o, W + 2 * o, H * e + 2 * o);
+  else if (kind === "side") ctx.rect(-o, -o, W * e + 2 * o, H + 2 * o);
+  else { const n = 5, bh = Math.ceil(H / n); for (let i = 0; i < n; i++) ctx.rect(-o, i * bh - 1, (W + 2 * o) * clamp(e * 1.4 - i * 0.08), bh + 2); }
   ctx.clip();
 }
 window.setup = function (s, width, height) {
@@ -397,7 +422,7 @@ window.setup = function (s, width, height) {
 };
 window.renderAt = function (t) {
   const beats = story.beats; let i = beats.findIndex((b) => t < b.start + b.dur); if (i < 0) i = beats.length - 1;
-  const b = beats[i], local = t - b.start, kinds = ["circle", "up", "side", "bars"];
+  const b = beats[i], local = t - b.start, kinds = ["circle", "up", "side"];
   if (i > 0 && local < WIPE) {
     const prev = beats[i - 1]; drawBeat(prev, prev.dur + local);
     ctx.save(); wipeClip(kinds[i % kinds.length], local / WIPE); drawBeat(b, local); ctx.restore();
@@ -409,28 +434,52 @@ window.loadFonts = async function (base) {
   return true;
 };
 
-/* Dry-run every AI-written scene: it must run without errors, show something, move, and be fast enough. */
+/* Dry-run every AI-written scene. It must run without errors, fill the frame, show a real picture, keep moving,
+   use readable text that stays inside the frame, and not pile things on top of each other. */
 window.checkBeats = function () {
-  const probe = document.createElement("canvas"); probe.width = 54; probe.height = Math.round(54 * H / W); const pc = probe.getContext("2d", { willReadFrequently: true });
-  const out = []; strict = true;
-  story.beats.forEach((b, i) => {
+  const PW = 108, PH = Math.round((PW * H) / W), probe = document.createElement("canvas"); probe.width = PW; probe.height = PH;
+  const pc = probe.getContext("2d", { willReadFrequently: true }), out = []; strict = true;
+  const grab = () => { pc.clearRect(0, 0, PW, PH); pc.drawImage(cvs, 0, 0, PW, PH); return pc.getImageData(0, 0, PW, PH).data; };
+  const L = (d, k) => d[k * 4] * 0.3 + d[k * 4 + 1] * 0.6 + d[k * 4 + 2] * 0.1;
+  story.beats.forEach((b) => {
     if (!b.code) { out.push(null); return; }
     if (!b.fn) { out.push({ ok: false, err: "rejected by the safety filter" }); return; }
+    const problems = [];
     try {
-      const frames = [], t0 = performance.now();
-      [0.3, 0.6, 0.95].forEach((f) => {
-        ctx.clearRect(0, 0, W, H); drawBeat(b, b.dur * f);
-        pc.drawImage(cvs, 0, 0, probe.width, probe.height); frames.push(pc.getImageData(0, 0, probe.width, probe.height).data);
-      });
-      const ms = (performance.now() - t0) / 3, n = frames[0].length / 4; let mean = 0, diff = 0;
-      for (let k = 0; k < n; k++) mean += frames[1][k * 4] * 0.3 + frames[1][k * 4 + 1] * 0.6 + frames[1][k * 4 + 2] * 0.1;
-      mean /= n; let v = 0;
-      for (let k = 0; k < n; k++) { const l = frames[1][k * 4] * 0.3 + frames[1][k * 4 + 1] * 0.6 + frames[1][k * 4 + 2] * 0.1; v += (l - mean) * (l - mean); }
-      for (let k = 0; k < n * 4; k++) diff += Math.abs(frames[0][k] - frames[2][k]); diff /= n * 4;
-      const ink = Math.sqrt(v / n), bad = ink < 6 ? "scene is blank" : diff < 0.6 ? "scene does not move" : ms > 200 ? "scene is too slow" : b.bad ? b.err : null;
-      out.push({ ok: !bad, err: bad || "", ink, diff, ms });
-    } catch (e) { out.push({ ok: false, err: String(e).slice(0, 160) }); }
+      const times = []; for (let x = 0.4; x < b.dur * 0.97; x += 0.8) times.push(x); times.push(b.dur * 0.97);
+      const shots = [], regs = [], t0 = performance.now();
+      times.forEach((tt) => { ctx.clearRect(0, 0, W, H); registry = []; drawBeat(b, tt); regs.push(registry); registry = null; shots.push(grab()); });
+      const ms = (performance.now() - t0) / times.length, n = PW * PH, last = shots[shots.length - 1], mid = shots[Math.floor(shots.length * 0.6)];
+      let holes = 0; for (let k = 0; k < n; k++) if (last[k * 4 + 3] < 250) holes++;
+      if (holes / n > 0.005) problems.push("the background does not fill the frame: call g.bg() first");
+      const detail = (d) => { let all = 0, band = 0, nb = 0; for (let y = 0; y < PH - 1; y++) for (let x = 0; x < PW - 1; x++) { const k = y * PW + x, e = Math.abs(d[k * 4] - d[(k + 1) * 4]) + Math.abs(d[k * 4 + 1] - d[(k + 1) * 4 + 1]) + Math.abs(d[k * 4 + 2] - d[(k + 1) * 4 + 2]) + Math.abs(d[k * 4] - d[(k + PW) * 4]) + Math.abs(d[k * 4 + 1] - d[(k + PW) * 4 + 1]) + Math.abs(d[k * 4 + 2] - d[(k + PW) * 4 + 2]); const hit = e > 60 ? 1 : 0; all += hit; if (y > PH * 0.22 && y < PH * 0.78) { band += hit; nb++; } } return [all / n, band / Math.max(nb, 1)]; };
+      const [edgeAll, edgeMid] = detail(last), [edgeAll2] = detail(mid);
+      b.metrics = { edgeAll, edgeMid, edgeAll2 };
+      if (edgeAll < 0.022 || edgeAll2 < 0.015 || edgeMid < 0.012) problems.push("the frame is mostly empty: draw a large main picture of the idea in the middle");
+      // movement: no stretch longer than 2.4 s where nothing changes
+      let still = 0, worst = 0;
+      for (let i = 1; i < shots.length; i++) { let ch = 0; for (let k = 0; k < n; k++) if (Math.abs(shots[i][k * 4] - shots[i - 1][k * 4]) + Math.abs(shots[i][k * 4 + 1] - shots[i - 1][k * 4 + 1]) + Math.abs(shots[i][k * 4 + 2] - shots[i - 1][k * 4 + 2]) > 36) ch++; still = ch / n < 0.0012 ? still + (times[i] - times[i - 1]) : 0; worst = Math.max(worst, still); }
+      if (worst > 2.4) problems.push(`nothing moves for ${worst.toFixed(1)} seconds: keep something animating through the whole scene`);
+      // text rules, judged on the settled frames
+      const settled = regs.slice(Math.floor(regs.length * 0.5)), fin = regs[regs.length - 1], seen = new Set();
+      const say = (m) => { if (!seen.has(m)) { seen.add(m); problems.push(m); } };
+      const inset = Math.min(W, H) * 0.02;
+      settled.forEach((r) => r.forEach((e) => {
+        if (e.kind !== "text" || e.alpha < 0.6) return;
+        if (e.raw < MIN_TEXT_UNITS * U * 0.97) say(`text "${e.str.slice(0, 24)}" is too small (${Math.round(e.raw / U)}); every text must be at least ${MIN_TEXT_UNITS}`);
+        if (e.x0 < -inset || e.x1 > W + inset || e.y0 < -inset || e.y1 > H + inset) say(`text "${e.str.slice(0, 24)}" runs off the edge of the frame`);
+      }));
+      const items = fin.filter((e) => e.alpha >= 0.6);
+      for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
+        const a = items[i], c = items[j]; if (a.kind === "icon" && c.kind === "icon") continue;
+        const w = Math.min(a.x1, c.x1) - Math.max(a.x0, c.x0), h = Math.min(a.y1, c.y1) - Math.max(a.y0, c.y0);
+        if (w > 0 && h > 0) { const small = Math.min((a.x1 - a.x0) * (a.y1 - a.y0), (c.x1 - c.x0) * (c.y1 - c.y0)) || 1; if ((w * h) / small > 0.12) say(`${a.kind === "text" ? `text "${a.str.slice(0, 20)}"` : "an icon"} overlaps ${c.kind === "text" ? `text "${c.str.slice(0, 20)}"` : "an icon"}`); }
+      }
+      if (ms > 200) problems.push("the scene is too slow to draw");
+      if (b.bad && b.err) problems.push(b.err);
+      out.push({ ok: problems.length === 0, err: problems.slice(0, 3).join("; "), ms, metrics: b.metrics });
+    } catch (e) { registry = null; out.push({ ok: false, err: String(e).slice(0, 160) }); }
   });
-  strict = false; return out;
+  strict = false; registry = null; return out;
 };
 window.disableBeat = function (i) { story.beats[i].bad = true; story.beats[i].fn = null; };

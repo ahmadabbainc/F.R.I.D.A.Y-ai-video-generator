@@ -1,5 +1,5 @@
 // Caches the app shell so Friday opens instantly. API calls always go to the network.
-const CACHE = "friday-shell-v4";
+const CACHE = "friday-shell-v5";
 const SHELL = [
   "./", "index.html", "styles.css", "app.js", "manifest.webmanifest",
   "fonts/inter-regular.woff", "fonts/inter-medium.woff", "fonts/inter-display-semibold.woff",
